@@ -1,0 +1,11 @@
+!XTB
+
+%docker
+  guest "gmp.xyz"
+  guestcharge -1
+  fixhost true
+  docklevel complete
+  NOPT 100
+end
+
+* xyzfile -1 1 flower_ring_al.xyz

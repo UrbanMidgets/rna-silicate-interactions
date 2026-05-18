@@ -1,0 +1,10 @@
+!XTB
+
+%docker
+  guest "amp.xyz"
+  guestcharge -1
+  fixhost true
+  docklevel normal
+end
+
+* xyzfile -1 1 flower_ring_al.xyz

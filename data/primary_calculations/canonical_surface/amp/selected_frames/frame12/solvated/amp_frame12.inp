@@ -1,0 +1,29 @@
+! PBE0 D3BJ CPCM(water) Opt def2-TZVP
+
+%pal
+  nprocs 8
+end
+
+%maxcore 3500
+
+%geom
+  Constraints
+    { C 100 C }  # from PyMOL 101
+    { C 101 C }  # from PyMOL 102
+    { C 99  C }  # from PyMOL 100
+    { C 97  C }  # from PyMOL 98
+    { C 95  C }  # from PyMOL 96
+    { C 93  C }  # from PyMOL 94
+    { C 92  C }  # from PyMOL 93
+    { C 91  C }  # from PyMOL 92
+    { C 90  C }  # from PyMOL 91
+    { C 94  C }  # from PyMOL 95
+    { C 96  C }  # from PyMOL 97
+    { C 98  C }
+  end
+  
+  # Optional but nice for big embedded surfaces
+  ReduceRedInts true
+end
+
+*xyzfile -1 1 frame12.xyz

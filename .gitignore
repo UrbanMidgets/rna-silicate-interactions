@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+
+# Large ORCA scratch/restart/binary files should stay in the raw archive,
+# not in the curated GitHub thesis dataset.
+data/**/*.gbw
+data/**/*.densities
+data/**/*.tmp
+data/**/*.log
+data/**/*.mdrestart
+data/**/*.xtbrestart
+data/**/*.bas[0-9]
+data/**/*.png
+data/**/*.mp4
+data/**/*.gif

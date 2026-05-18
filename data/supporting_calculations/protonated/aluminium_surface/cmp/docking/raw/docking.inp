@@ -1,0 +1,10 @@
+!GFN-FF
+
+%docker
+  guest "cmp_prot.xyz"
+  guestcharge 0
+  fixhost true
+  docklevel normal
+end
+
+* xyzfile -1 1 flower_ring_al.xyz

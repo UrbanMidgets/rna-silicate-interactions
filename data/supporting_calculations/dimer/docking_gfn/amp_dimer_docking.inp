@@ -1,0 +1,10 @@
+!GFN-FF
+
+%docker
+  guest "amp_dimer_geom.xyz"
+  guestcharge -2
+  fixhost true
+  docklevel normal
+end
+
+* xyzfile 0 1 flower_ring.xyz
