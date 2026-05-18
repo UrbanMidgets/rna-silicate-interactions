@@ -104,9 +104,16 @@ function pickStructure(group) {
   }
 
   // Fallback to best available
-  const sysPrefix = (group.system || "").toLowerCase() + "_";
+  const sys = (group.system || "").toLowerCase();
+  const baseSys = sys.split("_")[0];
+  
+  const byFullSystem = structures.find((s) => s.file_name.toLowerCase().startsWith(sys + "_"));
+  if (byFullSystem) return byFullSystem;
+
+  const byBaseSystem = structures.find((s) => s.file_name.toLowerCase().startsWith(baseSys));
+  if (byBaseSystem) return byBaseSystem;
+
   return (
-    structures.find((s) => s.file_name.toLowerCase().startsWith(sysPrefix)) ||
     structures.find((s) => s.file_name.toLowerCase() !== `${group.frame}.xyz`.toLowerCase()) ||
     structures[0]
   );

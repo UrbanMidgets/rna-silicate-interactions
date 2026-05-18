@@ -12,9 +12,8 @@ Start with `MANIFEST.tsv` for a complete file index. For the main thesis systems
 - `primary_calculations/aluminium_surface/`: neutral AMP, CMP, GMP, and UMP on the aluminium-substituted surface.
 - `docking/`: docking inputs/outputs retained with the nucleotide/surface they generated.
 - `selected_frames/`: frames selected from docking and then optimised.
-- `candidate_frames/`: extracted structures that were retained but not optimised as primary calculations.
 - `checks/`: non-primary calculations such as unconstrained tests, R2SCAN checks, MD checks, or accidental reruns.
-- `supporting_calculations/`: protonated systems, dimer data, and magnesium docking.
+- `supporting_calculations/`: protonated systems, dimer data, and magnesium docking organized by surface type.
 - `reference_structures/`: standalone reference surface calculations.
 - `scripts/`: scripts copied from the source archive for provenance.
 

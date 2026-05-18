@@ -11,8 +11,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = REPO_ROOT / "data" / "MANIFEST.tsv"
 OUT = REPO_ROOT / "docs" / "data_index.json"
-RAW_BASE = "https://raw.githubusercontent.com/UrbanMidgets/rna-silicate-interactions/main/"
-BLOB_BASE = "https://github.com/UrbanMidgets/rna-silicate-interactions/blob/main/"
+RAW_BASE = "https://raw.githubusercontent.com/UrbanMidgets/rna-silicate-interactions/feature/pages-3dmol-poc/"
+BLOB_BASE = "https://github.com/UrbanMidgets/rna-silicate-interactions/blob/feature/pages-3dmol-poc/"
 
 KEEP_SUFFIXES = (
     ".xyz",
