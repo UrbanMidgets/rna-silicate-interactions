@@ -64,8 +64,40 @@ select {
   cursor: pointer;
 }
 
+.state-selector {
+  margin: 20px 0;
+  padding: 12px;
+  background: #f0f4f8;
+  border-radius: 8px;
+  border-left: 4px solid var(--accent);
+}
+
+.state-selector label {
+  margin-top: 0;
+}
+
+.toggles {
+  margin-top: 20px;
+}
+
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  margin-bottom: 8px;
+  font-weight: normal;
+  font-size: 0.95rem;
+}
+
+.toggle input {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
 .metrics {
-  margin-top: 24px;
+  margin-top: auto;
   padding-top: 16px;
   border-top: 1px solid var(--line);
   font-size: 0.95rem;
@@ -112,27 +144,75 @@ select {
 
 #selection-meta {
   color: var(--muted);
-  margin-bottom: 10px;
+  margin-bottom: 14px;
   font-family: monospace;
   font-size: 0.9rem;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
 }
 
 #file-links {
   margin: 0;
-  padding-left: 18px;
+  padding: 0;
+  list-style: none;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 4px 16px;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 8px;
 }
 
-#file-links a {
-  color: #0b567e;
-  text-decoration: none;
+.file-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: #f8fafb;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+
+.file-item:hover {
+  border-color: var(--accent);
+  background: #fff;
+}
+
+.file-item.active {
+  border-color: var(--accent);
+  background: #eef7f7;
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.file-item button {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
   font-size: 0.9rem;
+  text-align: left;
+  flex-grow: 1;
 }
 
-#file-links a:hover {
-  text-decoration: underline;
+.file-item .file-ext {
+  font-size: 0.75rem;
+  color: var(--muted);
+  background: #eee;
+  padding: 2px 4px;
+  border-radius: 4px;
+  text-transform: uppercase;
+}
+
+.file-item .github-link {
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 0.8rem;
+  opacity: 0.6;
+}
+
+.file-item .github-link:hover {
+  opacity: 1;
+  color: var(--text);
 }
 
 @media (max-width: 980px) {

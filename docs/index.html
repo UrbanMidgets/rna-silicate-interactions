@@ -26,8 +26,21 @@
           <label for="frame">Frame</label>
           <select id="frame"></select>
 
-          <label for="state">State</label>
-          <select id="state"></select>
+          <div class="state-selector">
+            <label for="state">Calculation State</label>
+            <select id="state"></select>
+          </div>
+
+          <div class="toggles">
+            <label class="toggle">
+              <input type="checkbox" id="prefer-trajectory" />
+              <span>Prefer Trajectories</span>
+            </label>
+            <label class="toggle">
+              <input type="checkbox" id="show-surface" checked />
+              <span>Show Surface</span>
+            </label>
+          </div>
         </div>
 
         <div class="metrics">

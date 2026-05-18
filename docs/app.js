@@ -1,6 +1,10 @@
 const state = {
   records: [],
   viewer: null,
+  activeGroup: null,
+  activeFile: null,
+  preferTrajectory: false,
+  showSurface: true,
 };
 
 const selects = {
@@ -9,6 +13,11 @@ const selects = {
   role: document.getElementById("role"),
   frame: document.getElementById("frame"),
   state: document.getElementById("state"),
+};
+
+const toggles = {
+  trajectory: document.getElementById("prefer-trajectory"),
+  surface: document.getElementById("show-surface"),
 };
 
 const matchCountEl = document.getElementById("match-count");
@@ -83,35 +92,31 @@ function groupRecords(records) {
 }
 
 function pickStructure(group) {
-  const structures = group.files.filter((f) => f.file_type === "structure");
+  const structures = group.files.filter((f) => f.file_type === "structure" || f.file_type === "trajectory");
   if (!structures.length) return null;
 
-  // Prefer explicit system-named structures (amp_/cmp_/gmp_/ump_) over generic frameXX.xyz.
-  const sysPrefix = (group.system || "").toLowerCase() + "_";
-  const bySystemName = structures.find((s) => s.file_name.toLowerCase().startsWith(sysPrefix));
-  if (bySystemName) return bySystemName;
-
-  // Next prefer non-generic names to avoid selecting placeholder frame snapshots.
-  const nonGeneric = structures.find((s) => s.file_name.toLowerCase() !== `${group.frame}.xyz`.toLowerCase());
-  if (nonGeneric) return nonGeneric;
-
-  const generic = structures.find((s) => s.file_name.toLowerCase() === `${group.frame}.xyz`.toLowerCase());
-  return generic || structures[0];
-}
-
-async function renderGroup(group) {
-  const structure = pickStructure(group);
-  if (!structure) {
-    selectionMeta.textContent = "No structure file in selected group.";
-    fileLinks.innerHTML = "";
-    state.viewer.clear();
-    state.viewer.render();
-    return;
+  if (state.preferTrajectory) {
+    const trj = structures.find((f) => f.file_type === "trajectory");
+    if (trj) return trj;
+  } else {
+    const static = structures.find((f) => f.file_type === "structure");
+    if (static) return static;
   }
 
-  const response = await fetch(structure.web_path);
+  // Fallback to best available
+  const sysPrefix = (group.system || "").toLowerCase() + "_";
+  return (
+    structures.find((s) => s.file_name.toLowerCase().startsWith(sysPrefix)) ||
+    structures.find((s) => s.file_name.toLowerCase() !== `${group.frame}.xyz`.toLowerCase()) ||
+    structures[0]
+  );
+}
+
+async function loadFileIntoViewer(file) {
+  state.activeFile = file;
+  const response = await fetch(file.web_path);
   if (!response.ok) {
-    throw new Error(`Could not load structure (${response.status}) from ${structure.web_path}`);
+    throw new Error(`Could not load file (${response.status}) from ${file.web_path}`);
   }
   const xyzText = await response.text();
 
@@ -120,28 +125,66 @@ async function renderGroup(group) {
   const atomCount = model && typeof model.selectedAtoms === "function" ? model.selectedAtoms({}).length : 0;
 
   if (!atomCount) {
-    throw new Error(`Parsed 0 atoms from ${structure.file_name}`);
+    throw new Error(`Parsed 0 atoms from ${file.file_name}`);
   }
 
-  // Primary style.
-  state.viewer.setStyle({}, { stick: { radius: 0.18 }, sphere: { scale: 0.25 } });
-  // Fallback line style so very large systems still remain visible on weaker GPUs.
+  // Nucleotide: Stick + Sphere
+  state.viewer.setStyle({ elem: ["C", "N", "P"] }, { stick: { radius: 0.18 }, sphere: { scale: 0.25 } });
+  
+  // Surface: Smaller sticks, more transparent or muted if needed
+  if (state.showSurface) {
+    state.viewer.setStyle({ elem: ["Si", "Al", "O"] }, { stick: { radius: 0.12, opacity: 0.9 } });
+  } else {
+    state.viewer.setStyle({ elem: ["Si", "Al", "O"] }, {}); // Hide
+  }
+
+  // Hydrogens: Line
   state.viewer.setStyle({ elem: "H" }, { line: { linewidth: 0.5 } });
+  
   state.viewer.zoomTo();
   state.viewer.render();
 
-  selectionMeta.textContent = `${group.surface} | ${group.system} | ${group.role} | ${group.frame} | ${group.state} | atoms: ${atomCount} | ${structure.file_name}`;
+  updateSelectionPanel();
+}
+
+function updateSelectionPanel() {
+  const group = state.activeGroup;
+  if (!group) return;
+
+  selectionMeta.textContent = `${group.surface} | ${group.system} | ${group.role} | ${group.frame} | ${group.state} | atoms: ${state.viewer.selectedAtoms({}).length}`;
 
   fileLinks.innerHTML = "";
   const sorted = [...group.files].sort((a, b) => a.file_name.localeCompare(b.file_name));
+  
   for (const file of sorted) {
+    const isRenderable = file.file_type === "structure" || file.file_type === "trajectory";
+    
     const li = document.createElement("li");
-    const a = document.createElement("a");
-    a.href = file.blob_url || file.web_path;
-    a.target = "_blank";
-    a.rel = "noopener noreferrer";
-    a.textContent = `${file.file_name} (${file.file_type})`;
-    li.appendChild(a);
+    li.className = "file-item" + (state.activeFile === file ? " active" : "");
+    
+    const btn = document.createElement("button");
+    btn.textContent = file.file_name;
+    if (isRenderable) {
+      btn.onclick = () => loadFileIntoViewer(file).catch(err => alert(err));
+    } else {
+      btn.disabled = true;
+      btn.style.color = "var(--muted)";
+    }
+    
+    const ext = document.createElement("span");
+    ext.className = "file-ext";
+    ext.textContent = file.file_type;
+    
+    const gh = document.createElement("a");
+    gh.className = "github-link";
+    gh.href = file.blob_url || file.web_path;
+    gh.target = "_blank";
+    gh.innerHTML = " &boxplus;";
+    gh.title = "View on GitHub";
+
+    li.appendChild(btn);
+    li.appendChild(ext);
+    li.appendChild(gh);
     fileLinks.appendChild(li);
   }
 }
@@ -158,10 +201,23 @@ async function refresh() {
     fileLinks.innerHTML = "";
     state.viewer.clear();
     state.viewer.render();
+    state.activeGroup = null;
+    state.activeFile = null;
     return;
   }
 
-  await renderGroup(groups[0]);
+  state.activeGroup = groups[0];
+  const structure = pickStructure(groups[0]);
+  if (structure) {
+    await loadFileIntoViewer(structure);
+  } else {
+    selectionMeta.textContent = "No displayable structure in group.";
+    fileLinks.innerHTML = "";
+    state.viewer.clear();
+    state.viewer.render();
+    state.activeFile = null;
+    updateSelectionPanel();
+  }
 }
 
 async function init() {
@@ -170,10 +226,9 @@ async function init() {
   state.records = payload.records || [];
 
   state.viewer = $3Dmol.createViewer("viewer", {
-    backgroundColor: "#f7fafc",
+    backgroundColor: "#ffffff",
   });
 
-  // Handle window resize for 3Dmol viewer.
   window.addEventListener("resize", () => {
     if (state.viewer) state.viewer.resize();
   });
@@ -185,20 +240,29 @@ async function init() {
   setSelectOptions(selects.state, uniqueValues(state.records, "state"));
 
   Object.values(selects).forEach((el) => {
-    el.addEventListener("change", () => {
-      refresh().catch((err) => {
-        selectionMeta.textContent = `Error: ${err}`;
-      });
-    });
+    el.addEventListener("change", () => refresh().catch(console.error));
   });
 
-  // Small delay to ensure layout is settled before first render.
+  toggles.trajectory.addEventListener("change", (e) => {
+    state.preferTrajectory = e.target.checked;
+    refresh().catch(console.error);
+  });
+
+  toggles.surface.addEventListener("change", (e) => {
+    state.showSurface = e.target.checked;
+    if (state.activeFile) {
+      loadFileIntoViewer(state.activeFile).catch(console.error);
+    }
+  });
+
   setTimeout(() => {
-    refresh().catch((err) => {
-      selectionMeta.textContent = `Failed to load initial structure: ${err}`;
-    });
+    refresh().catch(console.error);
   }, 100);
 }
+
+init().catch((err) => {
+  selectionMeta.textContent = `Failed to initialize app: ${err}`;
+});
 
 init().catch((err) => {
   selectionMeta.textContent = `Failed to initialize app: ${err}`;
