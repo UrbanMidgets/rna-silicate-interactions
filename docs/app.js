@@ -85,8 +85,18 @@ function groupRecords(records) {
 function pickStructure(group) {
   const structures = group.files.filter((f) => f.file_type === "structure");
   if (!structures.length) return null;
-  const preferred = structures.find((s) => s.file_name === `${group.frame}.xyz`);
-  return preferred || structures[0];
+
+  // Prefer explicit system-named structures (amp_/cmp_/gmp_/ump_) over generic frameXX.xyz.
+  const sysPrefix = (group.system || "").toLowerCase() + "_";
+  const bySystemName = structures.find((s) => s.file_name.toLowerCase().startsWith(sysPrefix));
+  if (bySystemName) return bySystemName;
+
+  // Next prefer non-generic names to avoid selecting placeholder frame snapshots.
+  const nonGeneric = structures.find((s) => s.file_name.toLowerCase() !== `${group.frame}.xyz`.toLowerCase());
+  if (nonGeneric) return nonGeneric;
+
+  const generic = structures.find((s) => s.file_name.toLowerCase() === `${group.frame}.xyz`.toLowerCase());
+  return generic || structures[0];
 }
 
 async function renderGroup(group) {
@@ -106,12 +116,21 @@ async function renderGroup(group) {
   const xyzText = await response.text();
 
   state.viewer.clear();
-  state.viewer.addModel(xyzText, "xyz");
+  const model = state.viewer.addModel(xyzText, "xyz");
+  const atomCount = model && typeof model.selectedAtoms === "function" ? model.selectedAtoms({}).length : 0;
+
+  if (!atomCount) {
+    throw new Error(`Parsed 0 atoms from ${structure.file_name}`);
+  }
+
+  // Primary style.
   state.viewer.setStyle({}, { stick: { radius: 0.18 }, sphere: { scale: 0.25 } });
+  // Fallback line style so very large systems still remain visible on weaker GPUs.
+  state.viewer.setStyle({ elem: "H" }, { line: { linewidth: 0.5 } });
   state.viewer.zoomTo();
   state.viewer.render();
 
-  selectionMeta.textContent = `${group.surface} | ${group.system} | ${group.role} | ${group.frame} | ${group.state}`;
+  selectionMeta.textContent = `${group.surface} | ${group.system} | ${group.role} | ${group.frame} | ${group.state} | atoms: ${atomCount} | ${structure.file_name}`;
 
   fileLinks.innerHTML = "";
   const sorted = [...group.files].sort((a, b) => a.file_name.localeCompare(b.file_name));
