@@ -7,29 +7,15 @@ const state = {
   showSurface: true,
 };
 
-const selects = {
-  surface: document.getElementById("surface"),
-  system: document.getElementById("system"),
-  role: document.getElementById("role"),
-  frame: document.getElementById("frame"),
-  state: document.getElementById("state"),
-};
-
-const toggles = {
-  trajectory: document.getElementById("prefer-trajectory"),
-  surface: document.getElementById("show-surface"),
-};
-
-const matchCountEl = document.getElementById("match-count");
-const groupCountEl = document.getElementById("group-count");
-const selectionMeta = document.getElementById("selection-meta");
-const fileLinks = document.getElementById("file-links");
+// Elements will be populated during init.
+let els = {};
 
 function uniqueValues(records, key) {
   return [...new Set(records.map((r) => r[key]).filter(Boolean))].sort();
 }
 
 function setSelectOptions(selectEl, values) {
+  if (!selectEl) return;
   const current = selectEl.value;
   selectEl.innerHTML = "";
   const allOpt = document.createElement("option");
@@ -51,11 +37,11 @@ function setSelectOptions(selectEl, values) {
 
 function getFilters() {
   return {
-    surface: selects.surface.value,
-    system: selects.system.value,
-    role: selects.role.value,
-    frame: selects.frame.value,
-    state: selects.state.value,
+    surface: els.surface.value,
+    system: els.system.value,
+    role: els.role.value,
+    frame: els.frame.value,
+    state: els.state.value,
   };
 }
 
@@ -158,9 +144,9 @@ function updateSelectionPanel() {
   const group = state.activeGroup;
   if (!group) return;
 
-  selectionMeta.textContent = `${group.surface} | ${group.system} | ${group.role} | ${group.frame} | ${group.state} | atoms: ${state.viewer.selectedAtoms({}).length}`;
+  els.selectionMeta.textContent = `${group.surface} | ${group.system} | ${group.role} | ${group.frame} | ${group.state} | atoms: ${state.viewer.selectedAtoms({}).length}`;
 
-  fileLinks.innerHTML = "";
+  els.fileLinks.innerHTML = "";
   const sorted = [...group.files].sort((a, b) => a.file_name.localeCompare(b.file_name));
   
   for (const file of sorted) {
@@ -192,7 +178,7 @@ function updateSelectionPanel() {
     li.appendChild(btn);
     li.appendChild(ext);
     li.appendChild(gh);
-    fileLinks.appendChild(li);
+    els.fileLinks.appendChild(li);
   }
 }
 
@@ -200,12 +186,12 @@ async function refresh() {
   const filters = getFilters();
   const filtered = applyFilters(state.records, filters);
   const groups = groupRecords(filtered);
-  matchCountEl.textContent = String(filtered.length);
-  groupCountEl.textContent = String(groups.length);
+  els.matchCount.textContent = String(filtered.length);
+  els.groupCount.textContent = String(groups.length);
 
   if (!groups.length) {
-    selectionMeta.textContent = "No matching groups for the current filters.";
-    fileLinks.innerHTML = "";
+    els.selectionMeta.textContent = "No matching groups for the current filters.";
+    els.fileLinks.innerHTML = "";
     state.viewer.clear();
     state.viewer.render();
     state.activeGroup = null;
@@ -218,8 +204,8 @@ async function refresh() {
   if (structure) {
     await loadFileIntoViewer(structure);
   } else {
-    selectionMeta.textContent = "No displayable structure in group.";
-    fileLinks.innerHTML = "";
+    els.selectionMeta.textContent = "No displayable structure in group.";
+    els.fileLinks.innerHTML = "";
     state.viewer.clear();
     state.viewer.render();
     state.activeFile = null;
@@ -228,9 +214,29 @@ async function refresh() {
 }
 
 async function init() {
+  // Populate elements map
+  els = {
+    surface: document.getElementById("surface"),
+    system: document.getElementById("system"),
+    role: document.getElementById("role"),
+    frame: document.getElementById("frame"),
+    state: document.getElementById("state"),
+    trajectory: document.getElementById("prefer-trajectory"),
+    showSurfaceToggle: document.getElementById("show-surface"),
+    matchCount: document.getElementById("match-count"),
+    groupCount: document.getElementById("group-count"),
+    selectionMeta: document.getElementById("selection-meta"),
+    fileLinks: document.getElementById("file-links"),
+  };
+
   const response = await fetch("./data_index.json");
+  if (!response.ok) throw new Error(`HTTP ${response.status} loading index`);
   const payload = await response.json();
   state.records = payload.records || [];
+
+  if (!state.records.length) {
+    els.selectionMeta.textContent = "Warning: Loaded 0 records from index.";
+  }
 
   state.viewer = $3Dmol.createViewer("viewer", {
     backgroundColor: "#ffffff",
@@ -240,37 +246,44 @@ async function init() {
     if (state.viewer) state.viewer.resize();
   });
 
-  setSelectOptions(selects.surface, uniqueValues(state.records, "surface"));
-  setSelectOptions(selects.system, uniqueValues(state.records, "system"));
-  setSelectOptions(selects.role, uniqueValues(state.records, "role"));
-  setSelectOptions(selects.frame, uniqueValues(state.records, "frame"));
-  setSelectOptions(selects.state, uniqueValues(state.records, "state"));
+  setSelectOptions(els.surface, uniqueValues(state.records, "surface"));
+  setSelectOptions(els.system, uniqueValues(state.records, "system"));
+  setSelectOptions(els.role, uniqueValues(state.records, "role"));
+  setSelectOptions(els.frame, uniqueValues(state.records, "frame"));
+  setSelectOptions(els.state, uniqueValues(state.records, "state"));
 
-  Object.values(selects).forEach((el) => {
-    el.addEventListener("change", () => refresh().catch(console.error));
+  const filterEls = [els.surface, els.system, els.role, els.frame, els.state];
+  filterEls.forEach((el) => {
+    if (el) el.addEventListener("change", () => refresh().catch(console.error));
   });
 
-  toggles.trajectory.addEventListener("change", (e) => {
-    state.preferTrajectory = e.target.checked;
-    refresh().catch(console.error);
-  });
+  if (els.trajectory) {
+    els.trajectory.addEventListener("change", (e) => {
+      state.preferTrajectory = e.target.checked;
+      refresh().catch(console.error);
+    });
+  }
 
-  toggles.surface.addEventListener("change", (e) => {
-    state.showSurface = e.target.checked;
-    if (state.activeFile) {
-      loadFileIntoViewer(state.activeFile).catch(console.error);
-    }
-  });
+  if (els.showSurfaceToggle) {
+    els.showSurfaceToggle.addEventListener("change", (e) => {
+      state.showSurface = e.target.checked;
+      if (state.activeFile) {
+        loadFileIntoViewer(state.activeFile).catch(console.error);
+      }
+    });
+  }
 
   setTimeout(() => {
-    refresh().catch(console.error);
+    refresh().catch(err => {
+      console.error("Initial refresh failed:", err);
+      if (els.selectionMeta) els.selectionMeta.textContent = `Error: ${err.message}`;
+    });
   }, 100);
 }
 
 init().catch((err) => {
-  selectionMeta.textContent = `Failed to initialize app: ${err}`;
-});
-
-init().catch((err) => {
-  selectionMeta.textContent = `Failed to initialize app: ${err}`;
+  console.error("App initialization failed:", err);
+  if (els.selectionMeta) {
+    els.selectionMeta.textContent = `Failed to initialize app: ${err.message}`;
+  }
 });
