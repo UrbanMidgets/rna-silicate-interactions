@@ -100,6 +100,9 @@ async function renderGroup(group) {
   }
 
   const response = await fetch(structure.web_path);
+  if (!response.ok) {
+    throw new Error(`Could not load structure (${response.status}) from ${structure.web_path}`);
+  }
   const xyzText = await response.text();
 
   state.viewer.clear();
@@ -115,7 +118,7 @@ async function renderGroup(group) {
   for (const file of sorted) {
     const li = document.createElement("li");
     const a = document.createElement("a");
-    a.href = file.web_path;
+    a.href = file.blob_url || file.web_path;
     a.target = "_blank";
     a.rel = "noopener noreferrer";
     a.textContent = `${file.file_name} (${file.file_type})`;
