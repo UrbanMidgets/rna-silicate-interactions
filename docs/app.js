@@ -173,6 +173,11 @@ async function init() {
     backgroundColor: "#f7fafc",
   });
 
+  // Handle window resize for 3Dmol viewer.
+  window.addEventListener("resize", () => {
+    if (state.viewer) state.viewer.resize();
+  });
+
   setSelectOptions(selects.surface, uniqueValues(state.records, "surface"));
   setSelectOptions(selects.system, uniqueValues(state.records, "system"));
   setSelectOptions(selects.role, uniqueValues(state.records, "role"));
@@ -187,7 +192,12 @@ async function init() {
     });
   });
 
-  await refresh();
+  // Small delay to ensure layout is settled before first render.
+  setTimeout(() => {
+    refresh().catch((err) => {
+      selectionMeta.textContent = `Failed to load initial structure: ${err}`;
+    });
+  }, 100);
 }
 
 init().catch((err) => {

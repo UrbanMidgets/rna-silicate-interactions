@@ -19,24 +19,34 @@ body {
 .app {
   display: grid;
   grid-template-columns: 320px 1fr;
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
 }
 
 .sidebar {
   background: var(--panel);
   border-right: 1px solid var(--line);
   padding: 20px;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
 }
 
 .sidebar h1 {
   margin: 0 0 8px;
   font-size: 1.3rem;
+  flex-shrink: 0;
 }
 
 .hint {
   margin: 0 0 14px;
   color: var(--muted);
   font-size: 0.95rem;
+  flex-shrink: 0;
+}
+
+.sidebar-content {
+  flex-grow: 1;
 }
 
 label {
@@ -51,37 +61,47 @@ select {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fff;
+  cursor: pointer;
 }
 
 .metrics {
-  margin-top: 16px;
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
   font-size: 0.95rem;
   color: var(--muted);
+  flex-shrink: 0;
 }
 
 .metrics strong { color: var(--accent); }
 
 .main {
   display: grid;
-  grid-template-rows: minmax(520px, 70vh) auto;
+  grid-template-rows: 1fr auto;
   gap: 12px;
   padding: 12px;
+  overflow-y: auto;
+  background: #f8fafb;
 }
 
-.viewer-wrap,
-.panel {
-  background: var(--panel);
+.viewer-wrap {
+  background: #000; /* Contrast for 3Dmol */
   border: 1px solid var(--line);
   border-radius: 12px;
+  overflow: hidden;
+  position: relative;
+  min-height: 400px;
 }
 
 #viewer {
   width: 100%;
   height: 100%;
-  min-height: 520px;
 }
 
 .panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
   padding: 14px 16px;
 }
 
@@ -93,16 +113,22 @@ select {
 #selection-meta {
   color: var(--muted);
   margin-bottom: 10px;
+  font-family: monospace;
+  font-size: 0.9rem;
 }
 
 #file-links {
   margin: 0;
   padding-left: 18px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 4px 16px;
 }
 
 #file-links a {
   color: #0b567e;
   text-decoration: none;
+  font-size: 0.9rem;
 }
 
 #file-links a:hover {
@@ -112,10 +138,24 @@ select {
 @media (max-width: 980px) {
   .app {
     grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+    overflow: auto;
   }
 
   .sidebar {
+    height: auto;
     border-right: 0;
     border-bottom: 1px solid var(--line);
+    padding: 16px;
+  }
+
+  .main {
+    height: auto;
+    overflow: visible;
+  }
+
+  .viewer-wrap {
+    height: 60vh;
+    min-height: 350px;
   }
 }
