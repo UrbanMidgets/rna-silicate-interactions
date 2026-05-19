@@ -222,7 +222,7 @@ with tabs[1]:
 
             if sol_data is None or dry_data is None:
                 st.error("Could not load comparison files.")
-                return
+                st.stop()
 
             is_sol_trj = solvated_file['repo_path'].lower().endswith("_trj.xyz")
             is_dry_trj = dry_file['repo_path'].lower().endswith("_trj.xyz")
