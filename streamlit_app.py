@@ -3,6 +3,8 @@ import pandas as pd
 import py3Dmol
 from stmol import showmol
 import os
+import streamlit.components.v1 as components
+import json
 
 # Set page config
 st.set_page_config(page_title="RNA Silicate Interactions", layout="wide")
@@ -86,14 +88,9 @@ def get_frame_count(xyz_path):
             num_atoms = int(first_line)
             f.seek(0)
             content = f.read()
-            # Count occurrences of the atom count at the start of a frame
-            # This is a simple heuristic for XYZ trajectories
             return content.count(f"\n{num_atoms}\n") + (1 if content.startswith(str(num_atoms)) else 0)
     except:
         return 1
-
-import streamlit.components.v1 as components
-import json
 
 @st.cache_data
 def get_xyz_data(path):
@@ -112,80 +109,94 @@ def render_xyz_interactive(xyz_path, title=None, height=600, width=1000):
     xyz_json = json.dumps(xyz_data)
     
     html_code = f"""
-    <div id="container" style="width: {width}px; height: {height}px; position: relative; background-color: white;"></div>
+    <div id="container" style="width: {width}px; height: {height}px; position: relative; background-color: white; border: 1px solid #ddd;"></div>
     <div id="controls" style="width: {width}px; padding: 10px; font-family: sans-serif; display: {'block' if is_trajectory else 'none'};">
         <input type="range" id="frame-slider" style="width: 70%;" min="0" value="0">
         <span id="frame-label" style="margin-left: 10px; font-weight: bold;">Frame: 1 / 1</span>
         <button id="play-btn" style="margin-left: 15px; padding: 5px 15px; cursor: pointer;">Play</button>
+        <div id="error-log" style="color: red; font-size: 12px; margin-top: 5px;"></div>
     </div>
-    <script src="https://3Dmol.org/build/3Dmol-min.js"></script>
+    <script src="https://3dmol.org/build/3Dmol-min.js"></script>
     <script>
-        var viewer = $3Dmol.createViewer("container", {{backgroundColor: "white"}});
-        var xyzData = {xyz_json};
-        
-        if ({'true' if is_trajectory else 'false'}) {{
-            viewer.addModelsAsFrames(xyzData, "xyz");
-        }} else {{
-            viewer.addModel(xyzData, "xyz");
-        }}
-        
-        function applyStyles(v) {{
-            v.setStyle({{elem: ["C", "N", "P"]}}, {{stick: {{radius: 0.18}}, sphere: {{scale: 0.25}}}});
-            if ({'true' if show_surface else 'false'}) {{
-                v.setStyle({{elem: ["Si", "Al", "O"]}}, {{stick: {{radius: 0.12, opacity: 0.9}}}});
-            }} else {{
-                v.setStyle({{elem: ["Si", "Al", "O"]}}, {{sphere: {{radius: 0.01, opacity: 0}}}});
-            }}
-            v.setStyle({{elem: "H"}}, {{line: {{linewidth: 0.5}}}});
-        }}
-        
-        applyStyles(viewer);
-        viewer.zoomTo();
-        viewer.render();
-        
-        if ({'true' if spin else 'false'}) {{
-            viewer.spin(true);
-        }}
-        
-        if ({'true' if is_trajectory else 'false'}) {{
-            var slider = document.getElementById("frame-slider");
-            var label = document.getElementById("frame-label");
-            var playBtn = document.getElementById("play-btn");
-            var nFrames = viewer.getFrameCount();
-            
-            slider.max = nFrames - 1;
-            label.innerText = "Frame: 1 / " + nFrames;
-            
-            slider.oninput = function() {{
-                viewer.setFrame(parseInt(this.value));
-                label.innerText = "Frame: " + (parseInt(this.value) + 1) + " / " + nFrames;
-                viewer.render();
-            }};
-            
-            var animating = false;
-            var interval;
-            playBtn.onclick = function() {{
-                if (animating) {{
-                    clearInterval(interval);
-                    playBtn.innerText = "Play";
-                }} else {{
-                    interval = setInterval(function() {{
-                        var next = (viewer.getFrame() + 1) % nFrames;
-                        viewer.setFrame(next);
-                        slider.value = next;
-                        label.innerText = "Frame: " + (next + 1) + " / " + nFrames;
-                        viewer.render();
-                    }}, 100);
-                    playBtn.innerText = "Pause";
+        (function() {{
+            function init() {{
+                try {{
+                    var element = document.getElementById('container');
+                    var viewer = $3Dmol.createViewer(element, {{ backgroundColor: 'white' }});
+                    var xyzData = {xyz_json};
+                    
+                    if ({'true' if is_trajectory else 'false'}) {{
+                        viewer.addModelsAsFrames(xyzData, "xyz");
+                    }} else {{
+                        viewer.addModel(xyzData, "xyz");
+                    }}
+                    
+                    viewer.setStyle({{elem: ["C", "N", "P"]}}, {{stick: {{radius: 0.18}}, sphere: {{scale: 0.25}}}});
+                    if ({'true' if show_surface else 'false'}) {{
+                        viewer.setStyle({{elem: ["Si", "Al", "O"]}}, {{stick: {{radius: 0.12, opacity: 0.9}}}});
+                    }} else {{
+                        viewer.setStyle({{elem: ["Si", "Al", "O"]}}, {{sphere: {{radius: 0.01, opacity: 0}}}});
+                    }}
+                    viewer.setStyle({{elem: "H"}}, {{line: {{linewidth: 0.5}}}});
+                    
+                    viewer.zoomTo();
+                    viewer.render();
+                    
+                    if ({'true' if spin else 'false'}) {{
+                        viewer.spin(true);
+                    }}
+                    
+                    if ({'true' if is_trajectory else 'false'}) {{
+                        var slider = document.getElementById("frame-slider");
+                        var label = document.getElementById("frame-label");
+                        var playBtn = document.getElementById("play-btn");
+                        var nFrames = viewer.getFrameCount();
+                        
+                        slider.max = nFrames - 1;
+                        label.innerText = "Frame: 1 / " + nFrames;
+                        
+                        slider.oninput = function() {{
+                            viewer.setFrame(parseInt(this.value));
+                            label.innerText = "Frame: " + (parseInt(this.value) + 1) + " / " + nFrames;
+                            viewer.render();
+                        }};
+                        
+                        var animating = false;
+                        var interval;
+                        playBtn.onclick = function() {{
+                            if (animating) {{
+                                clearInterval(interval);
+                                playBtn.innerText = "Play";
+                            }} else {{
+                                interval = setInterval(function() {{
+                                    var next = (viewer.getFrame() + 1) % nFrames;
+                                    viewer.setFrame(next);
+                                    slider.value = next;
+                                    label.innerText = "Frame: " + (next + 1) + " / " + nFrames;
+                                    viewer.render();
+                                }}, 100);
+                                playBtn.innerText = "Pause";
+                            }}
+                            animating = !animating;
+                        }};
+                    }}
+                }} catch (e) {{
+                    document.getElementById('error-log').innerText = "Error: " + e.message;
                 }}
-                animating = !animating;
-            }};
-        }}
+            }}
+            
+            if (window.$3Dmol) init();
+            else {{
+                var check = setInterval(function() {{
+                    if (window.$3Dmol) {{ clearInterval(check); init(); }}
+                }}, 100);
+            }}
+        }})();
     </script>
     """
     if title:
         st.subheader(title)
-    components.html(html_code, width=width + 20, height=height + 100)
+    components.html(html_code, width=width + 20, height=height + 150)
 
 def render_comparison_interactive(sol_path, dry_path, width=1200, height=600):
     sol_data = get_xyz_data(sol_path)
@@ -204,103 +215,123 @@ def render_comparison_interactive(sol_path, dry_path, width=1200, height=600):
     is_any_trj = is_sol_trj or is_dry_trj
     
     html_code = f"""
-    <div id="container" style="width: {width}px; height: {height}px; position: relative; background-color: white;"></div>
+    <div id="container" style="width: {width}px; height: {height}px; position: relative; background-color: white; border: 1px solid #ddd;"></div>
     <div id="controls" style="width: {width}px; padding: 10px; font-family: sans-serif; display: {'block' if is_any_trj else 'none'};">
         <input type="range" id="frame-slider" style="width: 70%;" min="0" value="0">
         <span id="frame-label" style="margin-left: 10px; font-weight: bold;">Frame: 1 / 1</span>
         <button id="play-btn" style="margin-left: 15px; padding: 5px 15px; cursor: pointer;">Play</button>
+        <div id="error-log" style="color: red; font-size: 12px; margin-top: 5px;"></div>
     </div>
-    <script src="https://3Dmol.org/build/3Dmol-min.js"></script>
+    <script src="https://3dmol.org/build/3Dmol-min.js"></script>
     <script>
-        var viewer = $3Dmol.createViewer("container", {{
-            viewergrid: [1, 2],
-            linked: true,
-            backgroundColor: "white"
-        }});
-        
-        var solData = {sol_json};
-        var dryData = {dry_json};
-        
-        if ({'true' if is_sol_trj else 'false'}) {{
-            viewer.addModelsAsFrames(solData, "xyz", {{viewer: [0, 0]}});
-        }} else {{
-            viewer.addModel(solData, "xyz", {{viewer: [0, 0]}});
-        }}
-        
-        if ({'true' if is_dry_trj else 'false'}) {{
-            viewer.addModelsAsFrames(dryData, "xyz", {{viewer: [0, 1]}});
-        }} else {{
-            viewer.addModel(dryData, "xyz", {{viewer: [0, 1]}});
-        }}
-        
-        function applyStyles(v, idx) {{
-            v.setStyle({{elem: ["C", "N", "P"]}}, {{stick: {{radius: 0.18}}, sphere: {{scale: 0.25}}}}, {{viewer: idx}});
-            if ({'true' if show_surface else 'false'}) {{
-                v.setStyle({{elem: ["Si", "Al", "O"]}}, {{stick: {{radius: 0.12, opacity: 0.9}}}}, {{viewer: idx}});
-            }} else {{
-                v.setStyle({{elem: ["Si", "Al", "O"]}}, {{sphere: {{radius: 0.01, opacity: 0}}}}, {{viewer: idx}});
+        (function() {{
+            function init() {{
+                try {
+                    var element = document.getElementById('container');
+                    var viewer = $3Dmol.createViewer(element, {
+                        rows: 1,
+                        cols: 2,
+                        control_all: true,
+                        linked: true,
+                        backgroundColor: 'white'
+                    });
+                    
+                    var solData = {sol_json};
+                    var dryData = {dry_json};
+                    
+                    if ({'true' if is_sol_trj else 'false'}) {
+                        viewer.addModelsAsFrames(solData, "xyz", {viewer: [0, 0]});
+                    } else {
+                        viewer.addModel(solData, "xyz", {viewer: [0, 0]});
+                    }
+                    
+                    if ({'true' if is_dry_trj else 'false'}) {
+                        viewer.addModelsAsFrames(dryData, "xyz", {viewer: [0, 1]});
+                    } else {
+                        viewer.addModel(dryData, "xyz", {viewer: [0, 1]});
+                    }
+                    
+                    function applyStyles(v, idx) {
+                        v.setStyle({elem: ["C", "N", "P"]}, {stick: {radius: 0.18}, sphere: {scale: 0.25}}, {viewer: idx});
+                        if ({'true' if show_surface else 'false'}) {
+                            v.setStyle({elem: ["Si", "Al", "O"]}, {stick: {radius: 0.12, opacity: 0.9}}, {viewer: idx});
+                        } else {
+                            v.setStyle({elem: ["Si", "Al", "O"]}, {sphere: {radius: 0.01, opacity: 0}}, {viewer: idx});
+                        }
+                        v.setStyle({elem: "H"}, {line: {linewidth: 0.5}}, {viewer: idx});
+                        v.zoomTo({viewer: idx});
+                    }
+                    
+                    applyStyles(viewer, [0, 0]);
+                    applyStyles(viewer, [0, 1]);
+                    
+                    viewer.render();
+                    
+                    if ({'true' if spin else 'false'}) {{
+                        viewer.spin(true);
+                    }}
+                    
+                    if ({'true' if is_any_trj else 'false'}) {{
+                        var slider = document.getElementById("frame-slider");
+                        var label = document.getElementById("frame-label");
+                        var playBtn = document.getElementById("play-btn");
+                        
+                        var nSol = {'viewer.getFrameCount({viewer: [0, 0]})' if is_sol_trj else '1'};
+                        var nDry = {'viewer.getFrameCount({viewer: [0, 1]})' if is_dry_trj else '1'};
+                        var nMax = Math.max(nSol, nDry);
+                        
+                        slider.max = nMax - 1;
+                        label.innerText = "Frame: 1 / " + nMax;
+                        
+                        function setGlobalFrame(frame) {{
+                            if ({'true' if is_sol_trj else 'false'}) {{
+                                viewer.setFrame(Math.min(frame, nSol - 1), {{viewer: [0, 0]}});
+                            }}
+                            if ({'true' if is_dry_trj else 'false'}) {{
+                                viewer.setFrame(Math.min(frame, nDry - 1), {{viewer: [0, 1]}});
+                            }}
+                            label.innerText = "Frame: " + (frame + 1) + " / " + nMax;
+                            viewer.render();
+                        }}
+                        
+                        slider.oninput = function() {{
+                            setGlobalFrame(parseInt(this.value));
+                        }};
+                        
+                        var animating = false;
+                        var interval;
+                        var currentFrame = 0;
+                        playBtn.onclick = function() {{
+                            if (animating) {{
+                                clearInterval(interval);
+                                playBtn.innerText = "Play";
+                            }} else {{
+                                interval = setInterval(function() {{
+                                    currentFrame = (currentFrame + 1) % nMax;
+                                    setGlobalFrame(currentFrame);
+                                    slider.value = currentFrame;
+                                }}, 100);
+                                playBtn.innerText = "Pause";
+                            }}
+                            animating = !animating;
+                        }};
+                    }}
+                }} catch (e) {{
+                    document.getElementById('error-log').innerText = "Error: " + e.message;
+                }}
             }}
-            v.setStyle({{elem: "H"}}, {{line: {{linewidth: 0.5}}}}, {{viewer: idx}});
-            v.zoomTo({{viewer: idx}});
-        }}
-        
-        applyStyles(viewer, [0, 0]);
-        applyStyles(viewer, [0, 1]);
-        viewer.render();
-        
-        if ({'true' if spin else 'false'}) {{
-            viewer.spin(true);
-        }}
-        
-        if ({'true' if is_any_trj else 'false'}) {{
-            var slider = document.getElementById("frame-slider");
-            var label = document.getElementById("frame-label");
-            var playBtn = document.getElementById("play-btn");
             
-            var nSol = {'viewer.getFrameCount({viewer: [0, 0]})' if is_sol_trj else '1'};
-            var nDry = {'viewer.getFrameCount({viewer: [0, 1]})' if is_dry_trj else '1'};
-            var nMax = Math.max(nSol, nDry);
-            
-            slider.max = nMax - 1;
-            label.innerText = "Frame: 1 / " + nMax;
-            
-            function setGlobalFrame(v) {{
-                if ({'true' if is_sol_trj else 'false'}) {{
-                    viewer.setFrame(Math.min(v, nSol - 1), {{viewer: [0, 0]}});
-                }}
-                if ({'true' if is_dry_trj else 'false'}) {{
-                    viewer.setFrame(Math.min(v, nDry - 1), {{viewer: [0, 1]}});
-                }}
-                label.innerText = "Frame: " + (v + 1) + " / " + nMax;
-                viewer.render();
+            if (window.$3Dmol) init();
+            else {{
+                var check = setInterval(function() {{
+                    if (window.$3Dmol) {{ clearInterval(check); init(); }}
+                }}, 100);
             }}
-            
-            slider.oninput = function() {{
-                setGlobalFrame(parseInt(this.value));
-            }};
-            
-            var animating = false;
-            var interval;
-            var currentFrame = 0;
-            playBtn.onclick = function() {{
-                if (animating) {{
-                    clearInterval(interval);
-                    playBtn.innerText = "Play";
-                }} else {{
-                    interval = setInterval(function() {{
-                        currentFrame = (currentFrame + 1) % nMax;
-                        setGlobalFrame(currentFrame);
-                        slider.value = currentFrame;
-                    }}, 100);
-                    playBtn.innerText = "Pause";
-                }}
-                animating = !animating;
-            }};
-        }}
+        }})();
     </script>
     """
     st.subheader("Left: Solvated | Right: Dry")
-    components.html(html_code, width=width + 20, height=height + 100)
+    components.html(html_code, width=width + 20, height=height + 150)
 
 with tabs[0]:
     st.header("File Viewer")
