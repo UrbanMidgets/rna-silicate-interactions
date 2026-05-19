@@ -15,20 +15,29 @@ function uniqueValues(records, key) {
 }
 
 function setSelectOptions(selectEl, values) {
-  if (!selectEl) return;
+  if (!selectEl) {
+    console.warn("setSelectOptions: target element missing");
+    return;
+  }
   const current = selectEl.value;
   selectEl.innerHTML = "";
+  
   const allOpt = document.createElement("option");
   allOpt.value = "all";
   allOpt.textContent = "All";
   selectEl.appendChild(allOpt);
-  for (const v of values) {
-    const opt = document.createElement("option");
-    opt.value = v;
-    opt.textContent = v;
-    selectEl.appendChild(opt);
+  
+  if (Array.isArray(values)) {
+    for (const v of values) {
+      if (!v) continue;
+      const opt = document.createElement("option");
+      opt.value = v;
+      opt.textContent = v;
+      selectEl.appendChild(opt);
+    }
   }
-  if (values.includes(current)) {
+  
+  if (values && values.includes(current)) {
     selectEl.value = current;
   } else {
     selectEl.value = "all";
