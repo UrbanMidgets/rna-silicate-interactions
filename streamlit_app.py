@@ -200,8 +200,27 @@ with tabs[1]:
         
         group_df = groups.get_group(selected_comp)
         
-        solvated_files = group_df[(group_df['state'] == 'solvated') & (group_df['repo_path'].str.endswith('.xyz'))]
-        dry_files = group_df[(group_df['state'] == 'dry') & (group_df['repo_path'].str.endswith('.xyz'))]
+        solvated_files = group_df[(group_df['state'] == 'solvated') & (group_df['repo_path'].str.endswith('.xyz'))].copy()
+        dry_files = group_df[(group_df['state'] == 'dry') & (group_df['repo_path'].str.endswith('.xyz'))].copy()
+
+        def rank_files(df_subset, state_label):
+            if df_subset.empty:
+                return df_subset
+            def get_rank(row):
+                score = 0
+                if row['repo_path'].lower().endswith('_trj.xyz'):
+                    score += 10
+                if state_label.lower() in row['file_name'].lower():
+                    score += 5
+                # Prefer files that are in a 'dry' or 'solvated' subfolder if applicable
+                if f"/{state_label.lower()}/" in row['repo_path'].lower():
+                    score += 2
+                return score
+            df_subset['rank'] = df_subset.apply(get_rank, axis=1)
+            return df_subset.sort_values('rank', ascending=False)
+
+        solvated_files = rank_files(solvated_files, 'solvated')
+        dry_files = rank_files(dry_files, 'dry')
 
         if len(solvated_files) > 1:
             sol_idx = st.selectbox("Select Solvated File", solvated_files.index, format_func=lambda x: solvated_files.loc[x, 'file_name'], key="sol_select")
