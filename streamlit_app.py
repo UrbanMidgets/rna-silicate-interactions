@@ -185,7 +185,11 @@ with tabs[1]:
             # Significantly wider and taller for full-screen feel
             viewer_width = 1600
             viewer_height = 800
-            view = py3Dmol.view(width=viewer_width, height=viewer_height, viewergrid=(1,2), linked=True)
+            # Use a 1x3 grid and put models in 0 and 2 to create a "natural" gap in the middle
+            view = py3Dmol.view(width=viewer_width, height=viewer_height, viewergrid=(1,3), linked=True)
+            
+            # Match Streamlit's dark background (or use white if preferred, but dark feels more integrated)
+            view.setBackgroundColor('#0e1117')
             
             # Helper to apply styles to a specific viewer in the grid
             def apply_comparison_style(v, model_data, viewer_idx):
@@ -199,7 +203,7 @@ with tabs[1]:
                 v.zoomTo(viewer=viewer_idx)
 
             apply_comparison_style(view, sol_data, (0,0))
-            apply_comparison_style(view, dry_data, (0,1))
+            apply_comparison_style(view, dry_data, (0,2))
             
             st.subheader(f"Left: Solvated | Right: Dry")
             showmol(view, height=viewer_height, width=viewer_width)
