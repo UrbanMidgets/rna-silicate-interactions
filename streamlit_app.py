@@ -219,22 +219,25 @@ with tabs[1]:
             dry_frame = None
             
             if is_sol_trj or is_dry_trj:
-                col_ctrl1, col_ctrl2 = st.columns(2)
-                with col_ctrl1:
-                    if is_sol_trj:
-                        n_sol = get_frame_count(solvated_file['repo_path'])
-                        sol_frame = st.slider("Solvated Frame", 0, n_sol - 1, 0)
-                        st.metric("Solvated Frame", f"{sol_frame + 1} / {n_sol}")
-                with col_ctrl2:
-                    if is_dry_trj:
-                        n_dry = get_frame_count(dry_file['repo_path'])
-                        dry_frame = st.slider("Dry Frame", 0, n_dry - 1, 0)
-                        st.metric("Dry Frame", f"{dry_frame + 1} / {n_dry}")
+                st.subheader("Trajectory Controls")
+                n_sol = get_frame_count(solvated_file['repo_path']) if is_sol_trj else 1
+                n_dry = get_frame_count(dry_file['repo_path']) if is_dry_trj else 1
+                max_frames = max(n_sol, n_dry)
                 
-                if st.checkbox("Sync Frames", value=True) and is_sol_trj and is_dry_trj:
-                    dry_frame = sol_frame
+                # Single global slider for PyMOL-like behavior
+                global_frame = st.slider("Global Frame Selector", 0, max_frames - 1, 0)
                 
-                if st.checkbox("Auto Animate All", value=False):
+                # Logic: stop at last frame if shorter than current global_frame
+                sol_frame = min(global_frame, n_sol - 1) if is_sol_trj else 0
+                dry_frame = min(global_frame, n_dry - 1) if is_dry_trj else 0
+                
+                col_m1, col_m2 = st.columns(2)
+                with col_m1:
+                    st.metric("Solvated Frame", f"{sol_frame + 1} / {n_sol}")
+                with col_m2:
+                    st.metric("Dry Frame", f"{dry_frame + 1} / {n_dry}")
+                
+                if st.checkbox("Auto Animate", value=False):
                     sol_frame = None
                     dry_frame = None
 
@@ -260,10 +263,18 @@ with tabs[1]:
                 else:
                     v.setStyle({'elem': ["Si", "Al", "O"]}, {'sphere': {'radius': 0.01, 'opacity': 0}}, viewer=viewer_idx)
                 v.setStyle({'elem': "H"}, {'line': {'linewidth': 0.5}}, viewer=viewer_idx)
-                v.zoomTo(viewer=viewer_idx)
+                
+                # Only zoomTo on initial load (or if desired, but PyMOL style avoids reframing)
+                # We use a session state trick or just rely on py3Dmol's default behavior if we don't call zoomTo every time
+                # To maintain camera, we avoid zoomTo when frame_idx is changing
+                if 'last_path' not in st.session_state or st.session_state.last_path != (solvated_file['repo_path'], dry_file['repo_path']):
+                    v.zoomTo(viewer=viewer_idx)
 
             apply_comparison_style(view, sol_data, (0,0), is_trj=is_sol_trj, frame_idx=sol_frame)
             apply_comparison_style(view, dry_data, (0,1), is_trj=is_dry_trj, frame_idx=dry_frame)
+            
+            # Update session state to track if we changed the underlying files
+            st.session_state.last_path = (solvated_file['repo_path'], dry_file['repo_path'])
             
             st.subheader(f"Left: Solvated | Right: Dry")
             showmol(view, height=viewer_height, width=viewer_width)
