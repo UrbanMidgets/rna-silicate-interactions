@@ -380,8 +380,6 @@ with tabs[1]:
                 render_xyz_interactive(dry_file['repo_path'], title="Dry", height=400, width=500)
     else:
         st.info("No frames found with both solvated and dry .xyz files for current filters.")
-    else:
-        st.info("No frames found with both solvated and dry .xyz files for current filters.")
 
 with tabs[2]:
     st.header("Filtered Data")
