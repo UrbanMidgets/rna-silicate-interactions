@@ -1,0 +1,10 @@
+.git
+.gitignore
+docs
+scripts
+README.md
+GEMINI.md
+MEMORY.md
+.gemini
+__pycache__
+*.pyc

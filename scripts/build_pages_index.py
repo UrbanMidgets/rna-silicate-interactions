@@ -11,6 +11,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = REPO_ROOT / "data" / "MANIFEST.tsv"
 OUT = REPO_ROOT / "docs" / "data_index.json"
+RAW_BASE = "https://raw.githubusercontent.com/UrbanMidgets/rna-silicate-interactions/feature/pages-3dmol-poc/"
+BLOB_BASE = "https://github.com/UrbanMidgets/rna-silicate-interactions/blob/feature/pages-3dmol-poc/"
 
 KEEP_SUFFIXES = (
     ".xyz",
@@ -63,7 +65,8 @@ def main() -> None:
                 "status": row["status"],
                 "notes": row["notes"],
                 "repo_path": repo_path,
-                "web_path": "../" + repo_path,
+                "web_path": RAW_BASE + repo_path,
+                "blob_url": BLOB_BASE + repo_path,
                 "size_bytes": int(row["size_bytes"] or "0"),
                 "file_type": classify_type(repo_path),
                 "file_name": Path(repo_path).name,

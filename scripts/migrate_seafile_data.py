@@ -134,7 +134,6 @@ def copy_frame_set(src_frames: Path, dst_system: Path, *, system: str, surface: 
     if not src_frames.is_dir():
         return
     selected_root = dst_system / "selected_frames"
-    candidates_root = dst_system / "candidate_frames"
     checks_root = dst_system / "checks"
 
     for frame_dir in sorted(p for p in src_frames.iterdir() if p.is_dir() and p.name.startswith("frame")):
@@ -142,8 +141,6 @@ def copy_frame_set(src_frames: Path, dst_system: Path, *, system: str, surface: 
         initial_xyz = frame_dir / f"{frame}.xyz"
 
         if not has_outputs(frame_dir):
-            if initial_xyz.is_file():
-                copy_file(initial_xyz, candidates_root / frame / initial_xyz.name, role=role, system=system, surface=surface, frame=frame, state="candidate", notes="candidate frame; no primary optimisation output in this folder")
             continue
 
         if initial_xyz.is_file():
@@ -186,9 +183,8 @@ def write_readmes() -> None:
         "- `primary_calculations/aluminium_surface/`: neutral AMP, CMP, GMP, and UMP on the aluminium-substituted surface.\n"
         "- `docking/`: docking inputs/outputs retained with the nucleotide/surface they generated.\n"
         "- `selected_frames/`: frames selected from docking and then optimised.\n"
-        "- `candidate_frames/`: extracted structures that were retained but not optimised as primary calculations.\n"
         "- `checks/`: non-primary calculations such as unconstrained tests, R2SCAN checks, MD checks, or accidental reruns.\n"
-        "- `supporting_calculations/`: protonated systems, dimer data, and magnesium docking.\n"
+        "- `supporting_calculations/`: protonated systems, dimer data, and magnesium docking organized by surface type.\n"
         "- `reference_structures/`: standalone reference surface calculations.\n"
         "- `scripts/`: scripts copied from the source archive for provenance.\n\n"
         "## Frame Folders\n\n"
@@ -216,8 +212,8 @@ def write_readmes() -> None:
     )
 
     for rel, text in {
-        "primary_calculations/README.md": "# Primary Calculations\n\nPrimary neutral nucleotide calculations are split into `canonical_surface/` and `aluminium_surface/`. Within each surface, AMP, CMP, GMP, and UMP each contain docking provenance and selected optimisation frames.\n\nUse `selected_frames/` for the thesis-primary solvated and dry optimisations. Use `candidate_frames/` for extracted but unoptimised structures and `checks/` for non-primary calculations.\n",
-        "supporting_calculations/README.md": "# Supporting Calculations\n\nSupporting data includes protonated nucleotide systems, AMP dimer calculations, and magnesium docking. These calculations are retained for provenance and comparison but are separated from the primary neutral nucleotide/surface dataset.\n",
+        "primary_calculations/README.md": "# Primary Calculations\n\nPrimary neutral nucleotide calculations are split into `canonical_surface/` and `aluminium_surface/`. Within each surface, AMP, CMP, GMP, and UMP each contain docking provenance and selected optimisation frames.\n\nUse `selected_frames/` for the thesis-primary solvated and dry optimisations. `checks/` contains non-primary calculations.\n",
+        "supporting_calculations/README.md": "# Supporting Calculations\n\nSupporting data includes protonated nucleotide systems, AMP dimer calculations, and magnesium docking. These are organized by surface type (`canonical_surface` or `aluminium_surface`) and system name to match the primary calculation layout.\n",
         "reference_structures/README.md": "# Reference Structures\n\nStandalone reference structures used by the calculation set, including the aluminium-substituted silicate surface reference.\n",
     }.items():
         path = DATA_ROOT / rel
@@ -254,16 +250,31 @@ def copy_primary() -> None:
 
 def copy_supporting() -> None:
     for nt in ("amp", "cmp"):
-        canonical_dst = DATA_ROOT / "supporting_calculations" / "protonated" / "canonical_surface" / nt
-        copy_docking(SOURCE_ROOT / nt / "protonated" / "docking", canonical_dst, system=nt, surface="canonical_protonated", role="supporting")
-        copy_frame_set(SOURCE_ROOT / nt / "protonated" / "frames", canonical_dst, system=nt, surface="canonical_protonated", role="supporting")
+        sys_name = f"{nt}_protonated"
+        canonical_dst = DATA_ROOT / "supporting_calculations" / "canonical_surface" / sys_name
+        copy_docking(SOURCE_ROOT / nt / "protonated" / "docking", canonical_dst, system=sys_name, surface="canonical", role="supporting")
+        copy_frame_set(SOURCE_ROOT / nt / "protonated" / "frames", canonical_dst, system=sys_name, surface="canonical", role="supporting")
 
-        al_dst = DATA_ROOT / "supporting_calculations" / "protonated" / "aluminium_surface" / nt
-        copy_docking(SOURCE_ROOT / nt / "al_surf" / "protonated_al_surf" / "docking", al_dst, system=nt, surface="aluminium_protonated", role="supporting")
-        copy_frame_set(SOURCE_ROOT / nt / "al_surf" / "protonated_al_surf" / "frames", al_dst, system=nt, surface="aluminium_protonated", role="supporting")
+        al_dst = DATA_ROOT / "supporting_calculations" / "aluminium_surface" / sys_name
+        copy_docking(SOURCE_ROOT / nt / "al_surf" / "protonated_al_surf" / "docking", al_dst, system=sys_name, surface="aluminium", role="supporting")
+        copy_frame_set(SOURCE_ROOT / nt / "al_surf" / "protonated_al_surf" / "frames", al_dst, system=sys_name, surface="aluminium", role="supporting")
 
-    copy_recursive_filtered(SOURCE_ROOT / "dimer", DATA_ROOT / "supporting_calculations" / "dimer", role="supporting", system="amp_dimer", surface="canonical", frame="", state="supporting", suffixes=CHECK_SUFFIXES, notes="AMP dimer supporting data")
-    copy_docking(SOURCE_ROOT / "mg_docking", DATA_ROOT / "supporting_calculations" / "magnesium_docking", system="mg", surface="canonical", role="supporting")
+    # Magnesium docking on canonical surface
+    mg_dst = DATA_ROOT / "supporting_calculations" / "canonical_surface" / "mg"
+    copy_docking(SOURCE_ROOT / "mg_docking", mg_dst, system="mg", surface="canonical", role="supporting")
+
+    # AMP Dimer on canonical surface
+    dimer_dst = DATA_ROOT / "supporting_calculations" / "canonical_surface" / "amp_dimer"
+    copy_docking(SOURCE_ROOT / "dimer" / "docking", dimer_dst, system="amp_dimer", surface="canonical", role="supporting")
+    copy_frame_set(SOURCE_ROOT / "dimer" / "frames", dimer_dst, system="amp_dimer", surface="canonical", role="supporting")
+    # Also copy the GFN checks for dimer
+    copy_recursive_filtered(SOURCE_ROOT / "dimer" / "frames_gfn", dimer_dst / "checks" / "gfn_frames", role="supporting", system="amp_dimer", surface="canonical", frame="", state="supporting", suffixes=CHECK_SUFFIXES, notes="GFN dimer checks")
+    copy_recursive_filtered(SOURCE_ROOT / "dimer" / "geom_opt", dimer_dst / "checks" / "geom_opt", role="supporting", system="amp_dimer", surface="canonical", frame="", state="supporting", suffixes=CHECK_SUFFIXES, notes="dimer geometry optimization checks")
+    # Small XYZ references in dimer root
+    for name in ("amp2.xyz", "amp2_c.xyz", "amp2_h.xyz", "amp3.xyz"):
+        src = SOURCE_ROOT / "dimer" / name
+        if src.is_file():
+            copy_file(src, dimer_dst / name, role="supporting", system="amp_dimer", surface="canonical", frame="", state="supporting", notes="dimer reference fragment")
 
 
 def copy_references_and_scripts() -> None:
