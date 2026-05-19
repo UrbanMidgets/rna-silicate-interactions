@@ -106,8 +106,8 @@ def render_xyz(xyz_path, title=None, height=600, width=1000, frame_idx=None):
         return
     
     view = py3Dmol.view(width=width, height=height)
-    # Match Streamlit background
-    view.setBackgroundColor('#0e1117')
+    # Reverting to white background
+    view.setBackgroundColor('white')
     
     is_trajectory = xyz_path.lower().endswith("_trj.xyz")
     if is_trajectory:
@@ -257,7 +257,7 @@ with tabs[1]:
             viewer_width = 1200
             viewer_height = 600
             view = py3Dmol.view(width=viewer_width, height=viewer_height, viewergrid=(1,2), linked=True)
-            view.setBackgroundColor('#0e1117')
+            view.setBackgroundColor('white')
             
             # Helper to apply styles to a specific viewer in the grid
             def apply_comparison_style(v, model_data, viewer_idx, is_trj=False, frame_idx=None):
