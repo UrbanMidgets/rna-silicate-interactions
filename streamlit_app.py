@@ -38,29 +38,32 @@ if df.empty:
 # Sidebar filters
 st.sidebar.header("Filters")
 
-def get_options(column):
-    opts = sorted([str(x) for x in df[column].unique() if x])
+def get_options(dataframe, column):
+    opts = sorted([str(x) for x in dataframe[column].unique() if x])
     return ["All"] + opts
 
-surface = st.sidebar.selectbox("Surface", get_options('surface'))
-system = st.sidebar.selectbox("System", get_options('system'))
-role = st.sidebar.selectbox("Role", get_options('role'))
-frame = st.sidebar.selectbox("Frame", get_options('frame'))
+# Dynamic filtering logic for sidebar
+filtered_df = df.copy()
+
+surface = st.sidebar.selectbox("Surface", get_options(df, 'surface'))
+if surface != "All":
+    filtered_df = filtered_df[filtered_df['surface'] == surface]
+
+system = st.sidebar.selectbox("System", get_options(filtered_df, 'system'))
+if system != "All":
+    filtered_df = filtered_df[filtered_df['system'] == system]
+
+frame = st.sidebar.selectbox("Frame", get_options(filtered_df, 'frame'))
+if frame != "All":
+    filtered_df = filtered_df[filtered_df['frame'] == frame]
+
+role = st.sidebar.selectbox("Role", get_options(filtered_df, 'role'))
+if role != "All":
+    filtered_df = filtered_df[filtered_df['role'] == role]
 
 st.sidebar.header("Settings")
 show_surface = st.sidebar.checkbox("Show Surface (Si, Al, O)", value=True)
 spin = st.sidebar.checkbox("Spin Molecule", value=False)
-
-# Filter the dataframe
-filtered_df = df.copy()
-if surface != "All":
-    filtered_df = filtered_df[filtered_df['surface'] == surface]
-if system != "All":
-    filtered_df = filtered_df[filtered_df['system'] == system]
-if role != "All":
-    filtered_df = filtered_df[filtered_df['role'] == role]
-if frame != "All":
-    filtered_df = filtered_df[filtered_df['frame'] == frame]
 
 st.sidebar.markdown(f"**Matches:** {len(filtered_df)}")
 
