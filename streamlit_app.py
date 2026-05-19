@@ -169,15 +169,10 @@ with tabs[1]:
             with open(dry_file['repo_path'], "r") as f:
                 dry_data = f.read()
 
-            # More balanced dimensions
-            viewer_width = 1000
-            viewer_height = 500
-            
-            # 1x3 grid with models in 0 and 2. 
-            view = py3Dmol.view(width=viewer_width, height=viewer_height, viewergrid=(1,3), linked=True)
-            
-            # Match Streamlit's dark background
-            view.setBackgroundColor('#0e1117')
+            # Reverting to the version the user liked
+            viewer_width = 1200
+            viewer_height = 600
+            view = py3Dmol.view(width=viewer_width, height=viewer_height, viewergrid=(1,2), linked=True)
             
             # Helper to apply styles to a specific viewer in the grid
             def apply_comparison_style(v, model_data, viewer_idx):
@@ -191,7 +186,7 @@ with tabs[1]:
                 v.zoomTo(viewer=viewer_idx)
 
             apply_comparison_style(view, sol_data, (0,0))
-            apply_comparison_style(view, dry_data, (0,2))
+            apply_comparison_style(view, dry_data, (0,1))
             
             st.subheader(f"Left: Solvated | Right: Dry")
             showmol(view, height=viewer_height, width=viewer_width)
