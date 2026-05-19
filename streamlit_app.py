@@ -7,19 +7,6 @@ import os
 # Set page config
 st.set_page_config(page_title="RNA Silicate Interactions", layout="wide")
 
-# Custom CSS to reduce padding and make it feel more "full width"
-st.markdown("""
-    <style>
-    .main .block-container {
-        padding-top: 2rem;
-        padding-bottom: 2rem;
-        padding-left: 2rem;
-        padding-right: 2rem;
-        max-width: 95%;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
 st.title("RNA Silicate Interactions")
 st.markdown("Supporting data for RNA nucleotide interactions with silicate surfaces.")
 
@@ -75,7 +62,7 @@ groups = comparison_options.groupby(['surface', 'system', 'frame', 'role'])
 # Main content area
 tabs = st.tabs(["Visualization", "Comparison", "Data Table"])
 
-def render_xyz(xyz_path, title=None, height=700, width=1500):
+def render_xyz(xyz_path, title=None, height=600, width=1000):
     if not os.path.exists(xyz_path):
         st.error(f"File not found: {xyz_path}")
         return
@@ -182,13 +169,14 @@ with tabs[1]:
             with open(dry_file['repo_path'], "r") as f:
                 dry_data = f.read()
 
-            # Significantly wider and taller for full-screen feel
-            viewer_width = 1600
-            viewer_height = 800
-            # Use a 1x3 grid and put models in 0 and 2 to create a "natural" gap in the middle
+            # More balanced dimensions
+            viewer_width = 1000
+            viewer_height = 500
+            
+            # 1x3 grid with models in 0 and 2. 
             view = py3Dmol.view(width=viewer_width, height=viewer_height, viewergrid=(1,3), linked=True)
             
-            # Match Streamlit's dark background (or use white if preferred, but dark feels more integrated)
+            # Match Streamlit's dark background
             view.setBackgroundColor('#0e1117')
             
             # Helper to apply styles to a specific viewer in the grid
