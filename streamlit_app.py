@@ -72,44 +72,58 @@ groups = comparison_options.groupby(['surface', 'system', 'frame', 'role'])
 # Main content area
 tabs = st.tabs(["Visualization", "Comparison", "Data Table"])
 
-def render_xyz(xyz_path, title=None, height=600, width=1000):
+def get_frame_count(xyz_path):
+    if not os.path.exists(xyz_path):
+        return 0
+    try:
+        with open(xyz_path, "r") as f:
+            first_line = f.readline().strip()
+            if not first_line.isdigit():
+                return 1
+            num_atoms = int(first_line)
+            f.seek(0)
+            content = f.read()
+            # Count occurrences of the atom count at the start of a frame
+            # This is a simple heuristic for XYZ trajectories
+            return content.count(f"\n{num_atoms}\n") + (1 if content.startswith(str(num_atoms)) else 0)
+    except:
+        return 1
+
+def render_xyz(xyz_path, title=None, height=600, width=1000, frame_idx=None):
     if not os.path.exists(xyz_path):
         st.error(f"File not found: {xyz_path}")
         return
-
+    
     with open(xyz_path, "r") as f:
         xyz_data = f.read()
-
+    
     view = py3Dmol.view(width=width, height=height)
     
     is_trajectory = xyz_path.lower().endswith("_trj.xyz")
     if is_trajectory:
         view.addModelsAsFrames(xyz_data, "xyz")
-        view.animate({'loop': 'forward', 'rebuild': True})
+        if frame_idx is not None:
+            view.setFrame(frame_idx)
+        else:
+            view.animate({'loop': 'forward', 'rebuild': True})
     else:
         view.addModel(xyz_data, "xyz")
 
     # Styling
-    # Nucleotide: Stick + Sphere
     view.setStyle({'elem': ["C", "N", "P"]}, {'stick': {'radius': 0.18}, 'sphere': {'scale': 0.25}})
-    
-    # Surface: Smaller sticks
     if show_surface:
         view.setStyle({'elem': ["Si", "Al", "O"]}, {'stick': {'radius': 0.12, 'opacity': 0.9}})
     else:
-        view.setStyle({'elem': ["Si", "Al", "O"]}, {'sphere': {'radius': 0.01, 'opacity': 0}}) # Hide
-
-    # Hydrogens: Line
+        view.setStyle({'elem': ["Si", "Al", "O"]}, {'sphere': {'radius': 0.01, 'opacity': 0}})
     view.setStyle({'elem': "H"}, {'line': {'linewidth': 0.5}})
-
+    
     if spin:
         view.spin(True)
-
+    
     view.zoomTo()
     if title:
         st.subheader(title)
     showmol(view, height=height, width=width)
-
 
 with tabs[0]:
     st.header("File Viewer")
@@ -126,7 +140,20 @@ with tabs[0]:
         path = selected_file['repo_path']
         
         if path.endswith('.xyz'):
-            render_xyz(path, f"Visualizing: {selected_file['file_name']}")
+            is_trj = path.lower().endswith("_trj.xyz")
+            frame_to_show = None
+            if is_trj:
+                n_frames = get_frame_count(path)
+                if n_frames > 1:
+                    col1, col2 = st.columns([3, 1])
+                    with col1:
+                        frame_to_show = st.slider("Frame Selector", 0, n_frames - 1, 0, key="viewer_frame_slider")
+                    with col2:
+                        st.metric("Current Frame", f"{frame_to_show + 1} / {n_frames}")
+                    if st.checkbox("Auto Animate", value=False, key="viewer_animate"):
+                        frame_to_show = None # This triggers animation in render_xyz
+            
+            render_xyz(path, f"Visualizing: {selected_file['file_name']}", frame_idx=frame_to_show)
         else:
             st.subheader(f"Viewing: {selected_file['file_name']}")
             if os.path.exists(path):
@@ -185,16 +212,45 @@ with tabs[1]:
             with open(dry_file['repo_path'], "r") as f:
                 dry_data = f.read()
 
+            is_sol_trj = solvated_file['repo_path'].lower().endswith("_trj.xyz")
+            is_dry_trj = dry_file['repo_path'].lower().endswith("_trj.xyz")
+            
+            sol_frame = None
+            dry_frame = None
+            
+            if is_sol_trj or is_dry_trj:
+                col_ctrl1, col_ctrl2 = st.columns(2)
+                with col_ctrl1:
+                    if is_sol_trj:
+                        n_sol = get_frame_count(solvated_file['repo_path'])
+                        sol_frame = st.slider("Solvated Frame", 0, n_sol - 1, 0)
+                        st.metric("Solvated Frame", f"{sol_frame + 1} / {n_sol}")
+                with col_ctrl2:
+                    if is_dry_trj:
+                        n_dry = get_frame_count(dry_file['repo_path'])
+                        dry_frame = st.slider("Dry Frame", 0, n_dry - 1, 0)
+                        st.metric("Dry Frame", f"{dry_frame + 1} / {n_dry}")
+                
+                if st.checkbox("Sync Frames", value=True) and is_sol_trj and is_dry_trj:
+                    dry_frame = sol_frame
+                
+                if st.checkbox("Auto Animate All", value=False):
+                    sol_frame = None
+                    dry_frame = None
+
             # Reverting to the version the user liked
             viewer_width = 1200
             viewer_height = 600
             view = py3Dmol.view(width=viewer_width, height=viewer_height, viewergrid=(1,2), linked=True)
             
             # Helper to apply styles to a specific viewer in the grid
-            def apply_comparison_style(v, model_data, viewer_idx, is_trj=False):
+            def apply_comparison_style(v, model_data, viewer_idx, is_trj=False, frame_idx=None):
                 if is_trj:
                     v.addModelsAsFrames(model_data, "xyz", viewer=viewer_idx)
-                    v.animate({'loop': 'forward', 'rebuild': True}, viewer=viewer_idx)
+                    if frame_idx is not None:
+                        v.setFrame(frame_idx, viewer=viewer_idx)
+                    else:
+                        v.animate({'loop': 'forward', 'rebuild': True}, viewer=viewer_idx)
                 else:
                     v.addModel(model_data, "xyz", viewer=viewer_idx)
                 
@@ -206,8 +262,8 @@ with tabs[1]:
                 v.setStyle({'elem': "H"}, {'line': {'linewidth': 0.5}}, viewer=viewer_idx)
                 v.zoomTo(viewer=viewer_idx)
 
-            apply_comparison_style(view, sol_data, (0,0), is_trj=solvated_file['repo_path'].lower().endswith("_trj.xyz"))
-            apply_comparison_style(view, dry_data, (0,1), is_trj=dry_file['repo_path'].lower().endswith("_trj.xyz"))
+            apply_comparison_style(view, sol_data, (0,0), is_trj=is_sol_trj, frame_idx=sol_frame)
+            apply_comparison_style(view, dry_data, (0,1), is_trj=is_dry_trj, frame_idx=dry_frame)
             
             st.subheader(f"Left: Solvated | Right: Dry")
             showmol(view, height=viewer_height, width=viewer_width)
@@ -216,10 +272,26 @@ with tabs[1]:
             col1, col2 = st.columns(2)
             with col1:
                 st.subheader("Solvated (Wet)")
-                render_xyz(solvated_file['repo_path'], height=400)
+                is_sol_trj = solvated_file['repo_path'].lower().endswith("_trj.xyz")
+                sol_frame = None
+                if is_sol_trj:
+                    n_sol = get_frame_count(solvated_file['repo_path'])
+                    sol_frame = st.slider("Frame", 0, n_sol - 1, 0, key="sol_sep_slider")
+                    st.write(f"Frame: {sol_frame + 1} / {n_sol}")
+                    if st.checkbox("Animate", value=False, key="sol_sep_anim"):
+                        sol_frame = None
+                render_xyz(solvated_file['repo_path'], height=400, frame_idx=sol_frame)
             with col2:
                 st.subheader("Dry")
-                render_xyz(dry_file['repo_path'], height=400)
+                is_dry_trj = dry_file['repo_path'].lower().endswith("_trj.xyz")
+                dry_frame = None
+                if is_dry_trj:
+                    n_dry = get_frame_count(dry_file['repo_path'])
+                    dry_frame = st.slider("Frame", 0, n_dry - 1, 0, key="dry_sep_slider")
+                    st.write(f"Frame: {dry_frame + 1} / {n_dry}")
+                    if st.checkbox("Animate", value=False, key="dry_sep_anim"):
+                        dry_frame = None
+                render_xyz(dry_file['repo_path'], height=400, frame_idx=dry_frame)
     else:
         st.info("No frames found with both solvated and dry .xyz files for current filters.")
 
