@@ -136,6 +136,8 @@ with tabs[1]:
                 comp_groups.append(name)
     
     if comp_groups:
+        sync_cameras = st.checkbox("Sync Cameras", value=True)
+        
         selected_comp = st.selectbox(
             "Select Frame to Compare",
             comp_groups,
@@ -147,25 +149,54 @@ with tabs[1]:
         solvated_files = group_df[(group_df['state'] == 'solvated') & (group_df['repo_path'].str.endswith('.xyz'))]
         dry_files = group_df[(group_df['state'] == 'dry') & (group_df['repo_path'].str.endswith('.xyz'))]
 
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.subheader("Solvated (Wet)")
-            if len(solvated_files) > 1:
-                sol_idx = st.selectbox("Select Solvated File", solvated_files.index, format_func=lambda x: solvated_files.loc[x, 'file_name'], key="sol_select")
-                solvated_file = solvated_files.loc[sol_idx]
-            else:
-                solvated_file = solvated_files.iloc[0]
-            render_xyz(solvated_file['repo_path'], height=400)
-        
-        with col2:
-            st.subheader("Dry")
-            if len(dry_files) > 1:
-                dry_idx = st.selectbox("Select Dry File", dry_files.index, format_func=lambda x: dry_files.loc[x, 'file_name'], key="dry_select")
-                dry_file = dry_files.loc[dry_idx]
-            else:
-                dry_file = dry_files.iloc[0]
-            render_xyz(dry_file['repo_path'], height=400)
+        if len(solvated_files) > 1:
+            sol_idx = st.selectbox("Select Solvated File", solvated_files.index, format_func=lambda x: solvated_files.loc[x, 'file_name'], key="sol_select")
+            solvated_file = solvated_files.loc[sol_idx]
+        else:
+            solvated_file = solvated_files.iloc[0]
+
+        if len(dry_files) > 1:
+            dry_idx = st.selectbox("Select Dry File", dry_files.index, format_func=lambda x: dry_files.loc[x, 'file_name'], key="dry_select")
+            dry_file = dry_files.loc[dry_idx]
+        else:
+            dry_file = dry_files.iloc[0]
+
+        if sync_cameras:
+            # Combined grid view
+            with open(solvated_file['repo_path'], "r") as f:
+                sol_data = f.read()
+            with open(dry_file['repo_path'], "r") as f:
+                dry_data = f.read()
+
+            view = py3Dmol.view(width=800, height=500, viewergrid=(1,2))
+            
+            # Helper to apply styles to a specific viewer in the grid
+            def apply_comparison_style(v, model_data, viewer_idx):
+                v.addModel(model_data, "xyz", viewer=viewer_idx)
+                v.setStyle({'elem': ["C", "N", "P"]}, {'stick': {'radius': 0.18}, 'sphere': {'scale': 0.25}}, viewer=viewer_idx)
+                if show_surface:
+                    v.setStyle({'elem': ["Si", "Al", "O"]}, {'stick': {'radius': 0.12, 'opacity': 0.9}}, viewer=viewer_idx)
+                else:
+                    v.setStyle({'elem': ["Si", "Al", "O"]}, {'sphere': {'radius': 0.01, 'opacity': 0}}, viewer=viewer_idx)
+                v.setStyle({'elem': "H"}, {'line': {'linewidth': 0.5}}, viewer=viewer_idx)
+                v.zoomTo(viewer=viewer_idx)
+
+            apply_comparison_style(view, sol_data, (0,0))
+            apply_comparison_style(view, dry_data, (0,1))
+            
+            view.setLinkedViewer(view) # Links all viewers in the grid
+            
+            st.subheader(f"Left: Solvated | Right: Dry")
+            showmol(view, height=500, width=800)
+        else:
+            # Separate columns
+            col1, col2 = st.columns(2)
+            with col1:
+                st.subheader("Solvated (Wet)")
+                render_xyz(solvated_file['repo_path'], height=400)
+            with col2:
+                st.subheader("Dry")
+                render_xyz(dry_file['repo_path'], height=400)
     else:
         st.info("No frames found with both solvated and dry .xyz files for current filters.")
 
