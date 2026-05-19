@@ -92,6 +92,9 @@ def get_frame_count(xyz_path):
     except:
         return 1
 
+import streamlit.components.v1 as components
+import json
+
 @st.cache_data
 def get_xyz_data(path):
     if not os.path.exists(path):
@@ -99,41 +102,205 @@ def get_xyz_data(path):
     with open(path, "r") as f:
         return f.read()
 
-def render_xyz(xyz_path, title=None, height=600, width=1000, frame_idx=None):
+def render_xyz_interactive(xyz_path, title=None, height=600, width=1000):
     xyz_data = get_xyz_data(xyz_path)
     if xyz_data is None:
         st.error(f"File not found: {xyz_path}")
         return
     
-    view = py3Dmol.view(width=width, height=height)
-    # Reverting to white background
-    view.setBackgroundColor('white')
-    
     is_trajectory = xyz_path.lower().endswith("_trj.xyz")
-    if is_trajectory:
-        view.addModelsAsFrames(xyz_data, "xyz")
-        if frame_idx is not None:
-            view.setFrame(frame_idx)
-        else:
-            view.animate({'loop': 'forward', 'rebuild': True})
-    else:
-        view.addModel(xyz_data, "xyz")
-
-    # Styling
-    view.setStyle({'elem': ["C", "N", "P"]}, {'stick': {'radius': 0.18}, 'sphere': {'scale': 0.25}})
-    if show_surface:
-        view.setStyle({'elem': ["Si", "Al", "O"]}, {'stick': {'radius': 0.12, 'opacity': 0.9}})
-    else:
-        view.setStyle({'elem': ["Si", "Al", "O"]}, {'sphere': {'radius': 0.01, 'opacity': 0}})
-    view.setStyle({'elem': "H"}, {'line': {'linewidth': 0.5}})
+    xyz_json = json.dumps(xyz_data)
     
-    if spin:
-        view.spin(True)
-    
-    view.zoomTo() # Always zoom to ensure visibility in new iframe
+    html_code = f"""
+    <div id="container" style="width: {width}px; height: {height}px; position: relative; background-color: white;"></div>
+    <div id="controls" style="width: {width}px; padding: 10px; font-family: sans-serif; display: {'block' if is_trajectory else 'none'};">
+        <input type="range" id="frame-slider" style="width: 70%;" min="0" value="0">
+        <span id="frame-label" style="margin-left: 10px; font-weight: bold;">Frame: 1 / 1</span>
+        <button id="play-btn" style="margin-left: 15px; padding: 5px 15px; cursor: pointer;">Play</button>
+    </div>
+    <script src="https://3Dmol.org/build/3Dmol-min.js"></script>
+    <script>
+        var viewer = $3Dmol.createViewer("container", {{backgroundColor: "white"}});
+        var xyzData = {xyz_json};
+        
+        if ({'true' if is_trajectory else 'false'}) {{
+            viewer.addModelsAsFrames(xyzData, "xyz");
+        }} else {{
+            viewer.addModel(xyzData, "xyz");
+        }}
+        
+        function applyStyles(v) {{
+            v.setStyle({{elem: ["C", "N", "P"]}}, {{stick: {{radius: 0.18}}, sphere: {{scale: 0.25}}}});
+            if ({'true' if show_surface else 'false'}) {{
+                v.setStyle({{elem: ["Si", "Al", "O"]}}, {{stick: {{radius: 0.12, opacity: 0.9}}}});
+            }} else {{
+                v.setStyle({{elem: ["Si", "Al", "O"]}}, {{sphere: {{radius: 0.01, opacity: 0}}}});
+            }}
+            v.setStyle({{elem: "H"}}, {{line: {{linewidth: 0.5}}}});
+        }}
+        
+        applyStyles(viewer);
+        viewer.zoomTo();
+        viewer.render();
+        
+        if ({'true' if spin else 'false'}) {{
+            viewer.spin(true);
+        }}
+        
+        if ({'true' if is_trajectory else 'false'}) {{
+            var slider = document.getElementById("frame-slider");
+            var label = document.getElementById("frame-label");
+            var playBtn = document.getElementById("play-btn");
+            var nFrames = viewer.getFrameCount();
+            
+            slider.max = nFrames - 1;
+            label.innerText = "Frame: 1 / " + nFrames;
+            
+            slider.oninput = function() {{
+                viewer.setFrame(parseInt(this.value));
+                label.innerText = "Frame: " + (parseInt(this.value) + 1) + " / " + nFrames;
+                viewer.render();
+            }};
+            
+            var animating = false;
+            var interval;
+            playBtn.onclick = function() {{
+                if (animating) {{
+                    clearInterval(interval);
+                    playBtn.innerText = "Play";
+                }} else {{
+                    interval = setInterval(function() {{
+                        var next = (viewer.getFrame() + 1) % nFrames;
+                        viewer.setFrame(next);
+                        slider.value = next;
+                        label.innerText = "Frame: " + (next + 1) + " / " + nFrames;
+                        viewer.render();
+                    }}, 100);
+                    playBtn.innerText = "Pause";
+                }}
+                animating = !animating;
+            }};
+        }}
+    </script>
+    """
     if title:
         st.subheader(title)
-    showmol(view, height=height, width=width)
+    components.html(html_code, width=width + 20, height=height + 100)
+
+def render_comparison_interactive(sol_path, dry_path, width=1200, height=600):
+    sol_data = get_xyz_data(sol_path)
+    dry_data = get_xyz_data(dry_path)
+    
+    if sol_data is None or dry_data is None:
+        st.error("Could not load comparison files.")
+        return
+
+    is_sol_trj = sol_path.lower().endswith("_trj.xyz")
+    is_dry_trj = dry_path.lower().endswith("_trj.xyz")
+    
+    sol_json = json.dumps(sol_data)
+    dry_json = json.dumps(dry_data)
+    
+    is_any_trj = is_sol_trj or is_dry_trj
+    
+    html_code = f"""
+    <div id="container" style="width: {width}px; height: {height}px; position: relative; background-color: white;"></div>
+    <div id="controls" style="width: {width}px; padding: 10px; font-family: sans-serif; display: {'block' if is_any_trj else 'none'};">
+        <input type="range" id="frame-slider" style="width: 70%;" min="0" value="0">
+        <span id="frame-label" style="margin-left: 10px; font-weight: bold;">Frame: 1 / 1</span>
+        <button id="play-btn" style="margin-left: 15px; padding: 5px 15px; cursor: pointer;">Play</button>
+    </div>
+    <script src="https://3Dmol.org/build/3Dmol-min.js"></script>
+    <script>
+        var viewer = $3Dmol.createViewer("container", {{
+            viewergrid: [1, 2],
+            linked: true,
+            backgroundColor: "white"
+        }});
+        
+        var solData = {sol_json};
+        var dryData = {dry_json};
+        
+        if ({'true' if is_sol_trj else 'false'}) {{
+            viewer.addModelsAsFrames(solData, "xyz", {{viewer: [0, 0]}});
+        }} else {{
+            viewer.addModel(solData, "xyz", {{viewer: [0, 0]}});
+        }}
+        
+        if ({'true' if is_dry_trj else 'false'}) {{
+            viewer.addModelsAsFrames(dryData, "xyz", {{viewer: [0, 1]}});
+        }} else {{
+            viewer.addModel(dryData, "xyz", {{viewer: [0, 1]}});
+        }}
+        
+        function applyStyles(v, idx) {{
+            v.setStyle({{elem: ["C", "N", "P"]}}, {{stick: {{radius: 0.18}}, sphere: {{scale: 0.25}}}}, {{viewer: idx}});
+            if ({'true' if show_surface else 'false'}) {{
+                v.setStyle({{elem: ["Si", "Al", "O"]}}, {{stick: {{radius: 0.12, opacity: 0.9}}}}, {{viewer: idx}});
+            }} else {{
+                v.setStyle({{elem: ["Si", "Al", "O"]}}, {{sphere: {{radius: 0.01, opacity: 0}}}}, {{viewer: idx}});
+            }}
+            v.setStyle({{elem: "H"}}, {{line: {{linewidth: 0.5}}}}, {{viewer: idx}});
+            v.zoomTo({{viewer: idx}});
+        }}
+        
+        applyStyles(viewer, [0, 0]);
+        applyStyles(viewer, [0, 1]);
+        viewer.render();
+        
+        if ({'true' if spin else 'false'}) {{
+            viewer.spin(true);
+        }}
+        
+        if ({'true' if is_any_trj else 'false'}) {{
+            var slider = document.getElementById("frame-slider");
+            var label = document.getElementById("frame-label");
+            var playBtn = document.getElementById("play-btn");
+            
+            var nSol = {'viewer.getFrameCount({viewer: [0, 0]})' if is_sol_trj else '1'};
+            var nDry = {'viewer.getFrameCount({viewer: [0, 1]})' if is_dry_trj else '1'};
+            var nMax = Math.max(nSol, nDry);
+            
+            slider.max = nMax - 1;
+            label.innerText = "Frame: 1 / " + nMax;
+            
+            function setGlobalFrame(v) {{
+                if ({'true' if is_sol_trj else 'false'}) {{
+                    viewer.setFrame(Math.min(v, nSol - 1), {{viewer: [0, 0]}});
+                }}
+                if ({'true' if is_dry_trj else 'false'}) {{
+                    viewer.setFrame(Math.min(v, nDry - 1), {{viewer: [0, 1]}});
+                }}
+                label.innerText = "Frame: " + (v + 1) + " / " + nMax;
+                viewer.render();
+            }}
+            
+            slider.oninput = function() {{
+                setGlobalFrame(parseInt(this.value));
+            }};
+            
+            var animating = false;
+            var interval;
+            var currentFrame = 0;
+            playBtn.onclick = function() {{
+                if (animating) {{
+                    clearInterval(interval);
+                    playBtn.innerText = "Play";
+                }} else {{
+                    interval = setInterval(function() {{
+                        currentFrame = (currentFrame + 1) % nMax;
+                        setGlobalFrame(currentFrame);
+                        slider.value = currentFrame;
+                    }}, 100);
+                    playBtn.innerText = "Pause";
+                }}
+                animating = !animating;
+            }};
+        }}
+    </script>
+    """
+    st.subheader("Left: Solvated | Right: Dry")
+    components.html(html_code, width=width + 20, height=height + 100)
 
 with tabs[0]:
     st.header("File Viewer")
@@ -150,20 +317,7 @@ with tabs[0]:
         path = selected_file['repo_path']
         
         if path.endswith('.xyz'):
-            is_trj = path.lower().endswith("_trj.xyz")
-            frame_to_show = None
-            if is_trj:
-                n_frames = get_frame_count(path)
-                if n_frames > 1:
-                    col1, col2 = st.columns([3, 1])
-                    with col1:
-                        frame_to_show = st.slider("Frame Selector", 0, n_frames - 1, 0, key="viewer_frame_slider")
-                    with col2:
-                        st.metric("Current Frame", f"{frame_to_show + 1} / {n_frames}")
-                    if st.checkbox("Auto Animate", value=False, key="viewer_animate"):
-                        frame_to_show = None # This triggers animation in render_xyz
-            
-            render_xyz(path, f"Visualizing: {selected_file['file_name']}", frame_idx=frame_to_show)
+            render_xyz_interactive(path, f"Visualizing: {selected_file['file_name']}")
         else:
             st.subheader(f"Viewing: {selected_file['file_name']}")
             if os.path.exists(path):
@@ -216,101 +370,16 @@ with tabs[1]:
             dry_file = dry_files.iloc[0]
 
         if sync_cameras:
-            # Combined grid view
-            sol_data = get_xyz_data(solvated_file['repo_path'])
-            dry_data = get_xyz_data(dry_file['repo_path'])
-
-            if sol_data is None or dry_data is None:
-                st.error("Could not load comparison files.")
-                st.stop()
-
-            is_sol_trj = solvated_file['repo_path'].lower().endswith("_trj.xyz")
-            is_dry_trj = dry_file['repo_path'].lower().endswith("_trj.xyz")
-            
-            sol_frame = None
-            dry_frame = None
-            
-            if is_sol_trj or is_dry_trj:
-                st.subheader("Trajectory Controls")
-                n_sol = get_frame_count(solvated_file['repo_path']) if is_sol_trj else 1
-                n_dry = get_frame_count(dry_file['repo_path']) if is_dry_trj else 1
-                max_frames = max(n_sol, n_dry)
-                
-                # Single global slider for PyMOL-like behavior
-                global_frame = st.slider("Global Frame Selector", 0, max_frames - 1, 0)
-                
-                # Logic: stop at last frame if shorter than current global_frame
-                sol_frame = min(global_frame, n_sol - 1) if is_sol_trj else 0
-                dry_frame = min(global_frame, n_dry - 1) if is_dry_trj else 0
-                
-                col_m1, col_m2 = st.columns(2)
-                with col_m1:
-                    st.metric("Solvated Frame", f"{sol_frame + 1} / {n_sol}")
-                with col_m2:
-                    st.metric("Dry Frame", f"{dry_frame + 1} / {n_dry}")
-                
-                if st.checkbox("Auto Animate", value=False):
-                    sol_frame = None
-                    dry_frame = None
-
-            # Reverting to the version the user liked
-            viewer_width = 1200
-            viewer_height = 600
-            view = py3Dmol.view(width=viewer_width, height=viewer_height, viewergrid=(1,2), linked=True)
-            view.setBackgroundColor('white')
-            
-            # Helper to apply styles to a specific viewer in the grid
-            def apply_comparison_style(v, model_data, viewer_idx, is_trj=False, frame_idx=None):
-                if is_trj:
-                    v.addModelsAsFrames(model_data, "xyz", viewer=viewer_idx)
-                    if frame_idx is not None:
-                        v.setFrame(frame_idx, viewer=viewer_idx)
-                    else:
-                        v.animate({'loop': 'forward', 'rebuild': True}, viewer=viewer_idx)
-                else:
-                    v.addModel(model_data, "xyz", viewer=viewer_idx)
-                
-                v.setStyle({'elem': ["C", "N", "P"]}, {'stick': {'radius': 0.18}, 'sphere': {'scale': 0.25}}, viewer=viewer_idx)
-                if show_surface:
-                    v.setStyle({'elem': ["Si", "Al", "O"]}, {'stick': {'radius': 0.12, 'opacity': 0.9}}, viewer=viewer_idx)
-                else:
-                    v.setStyle({'elem': ["Si", "Al", "O"]}, {'sphere': {'radius': 0.01, 'opacity': 0}}, viewer=viewer_idx)
-                v.setStyle({'elem': "H"}, {'line': {'linewidth': 0.5}}, viewer=viewer_idx)
-                
-                # We MUST call zoomTo every time because a new iframe is generated by Streamlit
-                # If we don't, the molecule might be off-screen.
-                v.zoomTo(viewer=viewer_idx)
-
-            apply_comparison_style(view, sol_data, (0,0), is_trj=is_sol_trj, frame_idx=sol_frame)
-            apply_comparison_style(view, dry_data, (0,1), is_trj=is_dry_trj, frame_idx=dry_frame)
-            
-            st.subheader(f"Left: Solvated | Right: Dry")
-            showmol(view, height=viewer_height, width=viewer_width)
+            render_comparison_interactive(solvated_file['repo_path'], dry_file['repo_path'])
         else:
             # Separate columns
             col1, col2 = st.columns(2)
             with col1:
-                st.subheader("Solvated (Wet)")
-                is_sol_trj = solvated_file['repo_path'].lower().endswith("_trj.xyz")
-                sol_frame = None
-                if is_sol_trj:
-                    n_sol = get_frame_count(solvated_file['repo_path'])
-                    sol_frame = st.slider("Frame", 0, n_sol - 1, 0, key="sol_sep_slider")
-                    st.write(f"Frame: {sol_frame + 1} / {n_sol}")
-                    if st.checkbox("Animate", value=False, key="sol_sep_anim"):
-                        sol_frame = None
-                render_xyz(solvated_file['repo_path'], height=400, frame_idx=sol_frame)
+                render_xyz_interactive(solvated_file['repo_path'], title="Solvated (Wet)", height=400, width=500)
             with col2:
-                st.subheader("Dry")
-                is_dry_trj = dry_file['repo_path'].lower().endswith("_trj.xyz")
-                dry_frame = None
-                if is_dry_trj:
-                    n_dry = get_frame_count(dry_file['repo_path'])
-                    dry_frame = st.slider("Frame", 0, n_dry - 1, 0, key="dry_sep_slider")
-                    st.write(f"Frame: {dry_frame + 1} / {n_dry}")
-                    if st.checkbox("Animate", value=False, key="dry_sep_anim"):
-                        dry_frame = None
-                render_xyz(dry_file['repo_path'], height=400, frame_idx=dry_frame)
+                render_xyz_interactive(dry_file['repo_path'], title="Dry", height=400, width=500)
+    else:
+        st.info("No frames found with both solvated and dry .xyz files for current filters.")
     else:
         st.info("No frames found with both solvated and dry .xyz files for current filters.")
 
