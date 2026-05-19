@@ -214,6 +214,7 @@ async function refresh() {
 }
 
 async function init() {
+  console.log("Initializing app...");
   // Populate elements map
   els = {
     surface: document.getElementById("surface"),
@@ -229,25 +230,49 @@ async function init() {
     fileLinks: document.getElementById("file-links"),
   };
 
-  const response = await fetch("./data_index.json");
-  if (!response.ok) throw new Error(`HTTP ${response.status} loading index`);
-  const payload = await response.json();
-  state.records = payload.records || [];
-
-  if (!state.records.length) {
-    els.selectionMeta.textContent = "Warning: Loaded 0 records from index.";
+  if (els.selectionMeta) {
+    els.selectionMeta.textContent = "Loading data index...";
   }
 
-  state.viewer = $3Dmol.createViewer("viewer", {
-    backgroundColor: "#ffffff",
-  });
+  try {
+    const response = await fetch(`./data_index.json?v=${Date.now()}`);
+    if (!response.ok) throw new Error(`HTTP ${response.status} loading index`);
+    const payload = await response.json();
+    state.records = payload.records || [];
+    console.log(`Loaded ${state.records.length} records.`);
+
+    if (!state.records.length) {
+      els.selectionMeta.textContent = "Warning: Loaded 0 records from index.";
+      return;
+    }
+  } catch (err) {
+    console.error("Failed to fetch index:", err);
+    if (els.selectionMeta) els.selectionMeta.textContent = `Error loading index: ${err.message}`;
+    return;
+  }
+
+  try {
+    state.viewer = $3Dmol.createViewer("viewer", {
+      backgroundColor: "#ffffff",
+    });
+    console.log("3Dmol viewer created.");
+  } catch (err) {
+    console.error("Failed to create 3Dmol viewer:", err);
+    if (els.selectionMeta) els.selectionMeta.textContent = `Error creating 3D viewer: ${err.message}`;
+    // Continue anyway to see if dropdowns populate
+  }
 
   window.addEventListener("resize", () => {
     if (state.viewer) state.viewer.resize();
   });
 
-  setSelectOptions(els.surface, uniqueValues(state.records, "surface"));
-  setSelectOptions(els.system, uniqueValues(state.records, "system"));
+  const surfaces = uniqueValues(state.records, "surface");
+  const systems = uniqueValues(state.records, "system");
+  console.log("Available surfaces:", surfaces);
+  console.log("Available systems:", systems);
+
+  setSelectOptions(els.surface, surfaces);
+  setSelectOptions(els.system, systems);
   setSelectOptions(els.role, uniqueValues(state.records, "role"));
   setSelectOptions(els.frame, uniqueValues(state.records, "frame"));
   setSelectOptions(els.state, uniqueValues(state.records, "state"));
