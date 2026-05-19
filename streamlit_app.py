@@ -7,6 +7,19 @@ import os
 # Set page config
 st.set_page_config(page_title="RNA Silicate Interactions", layout="wide")
 
+# Custom CSS to reduce padding and make it feel more "full width"
+st.markdown("""
+    <style>
+    .main .block-container {
+        padding-top: 2rem;
+        padding-bottom: 2rem;
+        padding-left: 2rem;
+        padding-right: 2rem;
+        max-width: 95%;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
 st.title("RNA Silicate Interactions")
 st.markdown("Supporting data for RNA nucleotide interactions with silicate surfaces.")
 
@@ -62,37 +75,38 @@ groups = comparison_options.groupby(['surface', 'system', 'frame', 'role'])
 # Main content area
 tabs = st.tabs(["Visualization", "Comparison", "Data Table"])
 
-def render_xyz(xyz_path, title=None, height=600):
+def render_xyz(xyz_path, title=None, height=700, width=1500):
     if not os.path.exists(xyz_path):
         st.error(f"File not found: {xyz_path}")
         return
-    
+
     with open(xyz_path, "r") as f:
         xyz_data = f.read()
-    
-    view = py3Dmol.view(width=800, height=height)
+
+    view = py3Dmol.view(width=width, height=height)
     view.addModel(xyz_data, "xyz")
-    
+
     # Styling
     # Nucleotide: Stick + Sphere
     view.setStyle({'elem': ["C", "N", "P"]}, {'stick': {'radius': 0.18}, 'sphere': {'scale': 0.25}})
-    
+
     # Surface: Smaller sticks
     if show_surface:
         view.setStyle({'elem': ["Si", "Al", "O"]}, {'stick': {'radius': 0.12, 'opacity': 0.9}})
     else:
         view.setStyle({'elem': ["Si", "Al", "O"]}, {'sphere': {'radius': 0.01, 'opacity': 0}}) # Hide
-    
+
     # Hydrogens: Line
     view.setStyle({'elem': "H"}, {'line': {'linewidth': 0.5}})
-    
+
     if spin:
         view.spin(True)
-    
+
     view.zoomTo()
     if title:
         st.subheader(title)
-    showmol(view, height=height, width=800)
+    showmol(view, height=height, width=width)
+
 
 with tabs[0]:
     st.header("File Viewer")
@@ -168,7 +182,10 @@ with tabs[1]:
             with open(dry_file['repo_path'], "r") as f:
                 dry_data = f.read()
 
-            view = py3Dmol.view(width=800, height=500, viewergrid=(1,2), linked=True)
+            # Significantly wider and taller for full-screen feel
+            viewer_width = 1600
+            viewer_height = 800
+            view = py3Dmol.view(width=viewer_width, height=viewer_height, viewergrid=(1,2), linked=True)
             
             # Helper to apply styles to a specific viewer in the grid
             def apply_comparison_style(v, model_data, viewer_idx):
@@ -185,7 +202,7 @@ with tabs[1]:
             apply_comparison_style(view, dry_data, (0,1))
             
             st.subheader(f"Left: Solvated | Right: Dry")
-            showmol(view, height=500, width=800)
+            showmol(view, height=viewer_height, width=viewer_width)
         else:
             # Separate columns
             col1, col2 = st.columns(2)
