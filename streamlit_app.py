@@ -82,6 +82,8 @@ if frame != "All":
 st.sidebar.header("Settings")
 show_surface = st.sidebar.checkbox("Show Surface (Si, Al, O)", value=True)
 spin = st.sidebar.checkbox("Spin Molecule", value=False)
+performance_mode = st.sidebar.checkbox("Performance Mode", value=True)
+trajectory_stride = st.sidebar.slider("Trajectory Frame Step", 1, 10, 2)
 
 st.sidebar.markdown(f"**Matches:** {len(filtered_df)}")
 
@@ -93,6 +95,7 @@ groups = comparison_options.groupby(['surface', 'system', 'frame', 'role'])
 # Main content area
 tabs = st.tabs(["Visualization", "Comparison", "Data Table"])
 
+@st.cache_data
 def get_frame_count(xyz_path):
     resolved_path = resolve_repo_path(xyz_path)
     if resolved_path is None or not resolved_path.exists():
@@ -132,7 +135,7 @@ def get_text_preview(path, max_bytes=MAX_TEXT_PREVIEW_BYTES):
     was_truncated = file_size > max_bytes
     return preview, file_size, was_truncated
 
-def render_xyz(xyz_path, title=None, height=600, width=1000, frame_idx=None):
+def render_xyz(xyz_path, title=None, height=600, width=1000, frame_idx=None, fast_mode=False):
     xyz_data = get_xyz_data(xyz_path)
     if xyz_data is None:
         st.error(f"File not found: {xyz_path}")
@@ -153,12 +156,16 @@ def render_xyz(xyz_path, title=None, height=600, width=1000, frame_idx=None):
         view.addModel(xyz_data, "xyz")
 
     # Styling
-    view.setStyle({'elem': ["C", "N", "P"]}, {'stick': {'radius': 0.18}, 'sphere': {'scale': 0.25}})
+    main_stick_radius = 0.14 if fast_mode else 0.18
+    main_sphere_scale = 0.20 if fast_mode else 0.25
+    surface_stick_radius = 0.08 if fast_mode else 0.12
+    view.setStyle({'elem': ["C", "N", "P"]}, {'stick': {'radius': main_stick_radius}, 'sphere': {'scale': main_sphere_scale}})
     if show_surface:
-        view.setStyle({'elem': ["Si", "Al", "O"]}, {'stick': {'radius': 0.12, 'opacity': 0.9}})
+        view.setStyle({'elem': ["Si", "Al", "O"]}, {'stick': {'radius': surface_stick_radius, 'opacity': 0.9}})
     else:
         view.setStyle({'elem': ["Si", "Al", "O"]}, {'sphere': {'radius': 0.01, 'opacity': 0}})
-    view.setStyle({'elem': "H"}, {'line': {'linewidth': 0.5}})
+    h_line_width = 0.35 if fast_mode else 0.5
+    view.setStyle({'elem': "H"}, {'line': {'linewidth': h_line_width}})
     
     if spin:
         view.spin(True)
@@ -197,13 +204,25 @@ with tabs[0]:
                 if n_frames > 1:
                     col1, col2 = st.columns([3, 1])
                     with col1:
-                        frame_to_show = st.slider("Frame Selector", 0, n_frames - 1, 0, key="viewer_frame_slider")
+                        frame_to_show = st.slider(
+                            "Frame Selector",
+                            0,
+                            n_frames - 1,
+                            0,
+                            step=trajectory_stride,
+                            key="viewer_frame_slider",
+                        )
                     with col2:
                         st.metric("Current Frame", f"{frame_to_show + 1} / {n_frames}")
                     if st.checkbox("Auto Animate", value=False, key="viewer_animate"):
                         frame_to_show = None # This triggers animation in render_xyz
             
-            render_xyz(path, f"Visualizing: {selected_file['file_name']}", frame_idx=frame_to_show)
+            render_xyz(
+                path,
+                f"Visualizing: {selected_file['file_name']}",
+                frame_idx=frame_to_show,
+                fast_mode=performance_mode,
+            )
         else:
             st.subheader(f"Viewing: {selected_file['file_name']}")
             content, file_size, was_truncated = get_text_preview(path)
@@ -306,7 +325,13 @@ with tabs[1]:
                 max_frames = max(n_sol, n_dry)
                 
                 # Single global slider for PyMOL-like behavior
-                global_frame = st.slider("Global Frame Selector", 0, max_frames - 1, 0)
+                global_frame = st.slider(
+                    "Global Frame Selector",
+                    0,
+                    max_frames - 1,
+                    0,
+                    step=trajectory_stride,
+                )
                 
                 # Logic: stop at last frame if shorter than current global_frame
                 sol_frame = min(global_frame, n_sol - 1) if is_sol_trj else 0
@@ -339,12 +364,16 @@ with tabs[1]:
                 else:
                     v.addModel(model_data, "xyz", viewer=viewer_idx)
                 
-                v.setStyle({'elem': ["C", "N", "P"]}, {'stick': {'radius': 0.18}, 'sphere': {'scale': 0.25}}, viewer=viewer_idx)
+                main_stick_radius = 0.14 if performance_mode else 0.18
+                main_sphere_scale = 0.20 if performance_mode else 0.25
+                surface_stick_radius = 0.08 if performance_mode else 0.12
+                v.setStyle({'elem': ["C", "N", "P"]}, {'stick': {'radius': main_stick_radius}, 'sphere': {'scale': main_sphere_scale}}, viewer=viewer_idx)
                 if show_surface:
-                    v.setStyle({'elem': ["Si", "Al", "O"]}, {'stick': {'radius': 0.12, 'opacity': 0.9}}, viewer=viewer_idx)
+                    v.setStyle({'elem': ["Si", "Al", "O"]}, {'stick': {'radius': surface_stick_radius, 'opacity': 0.9}}, viewer=viewer_idx)
                 else:
                     v.setStyle({'elem': ["Si", "Al", "O"]}, {'sphere': {'radius': 0.01, 'opacity': 0}}, viewer=viewer_idx)
-                v.setStyle({'elem': "H"}, {'line': {'linewidth': 0.5}}, viewer=viewer_idx)
+                h_line_width = 0.35 if performance_mode else 0.5
+                v.setStyle({'elem': "H"}, {'line': {'linewidth': h_line_width}}, viewer=viewer_idx)
                 
                 # We MUST call zoomTo every time because a new iframe is generated by Streamlit
                 # If we don't, the molecule might be off-screen.
@@ -374,7 +403,7 @@ with tabs[1]:
                     st.write(f"Frame: {sol_frame + 1} / {n_sol}")
                     if st.checkbox("Animate", value=False, key="sol_sep_anim"):
                         sol_frame = None
-                render_xyz(solvated_file['repo_path'], height=400, frame_idx=sol_frame)
+                render_xyz(solvated_file['repo_path'], height=400, frame_idx=sol_frame, fast_mode=performance_mode)
             with col2:
                 st.subheader("Dry")
                 is_dry_trj = dry_file['repo_path'].lower().endswith("_trj.xyz")
@@ -385,7 +414,7 @@ with tabs[1]:
                     st.write(f"Frame: {dry_frame + 1} / {n_dry}")
                     if st.checkbox("Animate", value=False, key="dry_sep_anim"):
                         dry_frame = None
-                render_xyz(dry_file['repo_path'], height=400, frame_idx=dry_frame)
+                render_xyz(dry_file['repo_path'], height=400, frame_idx=dry_frame, fast_mode=performance_mode)
     else:
         st.info("No frames found with both solvated and dry .xyz files for current filters.")
 
