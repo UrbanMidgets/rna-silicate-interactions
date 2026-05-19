@@ -53,13 +53,13 @@ system = st.sidebar.selectbox("System", get_options(filtered_df, 'system'))
 if system != "All":
     filtered_df = filtered_df[filtered_df['system'] == system]
 
-frame = st.sidebar.selectbox("Frame", get_options(filtered_df, 'frame'))
-if frame != "All":
-    filtered_df = filtered_df[filtered_df['frame'] == frame]
-
 role = st.sidebar.selectbox("Role", get_options(filtered_df, 'role'))
 if role != "All":
     filtered_df = filtered_df[filtered_df['role'] == role]
+
+frame = st.sidebar.selectbox("Frame", get_options(filtered_df, 'frame'))
+if frame != "All":
+    filtered_df = filtered_df[filtered_df['frame'] == frame]
 
 st.sidebar.header("Settings")
 show_surface = st.sidebar.checkbox("Show Surface (Si, Al, O)", value=True)
