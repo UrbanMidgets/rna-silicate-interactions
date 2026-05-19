@@ -168,7 +168,7 @@ with tabs[1]:
             with open(dry_file['repo_path'], "r") as f:
                 dry_data = f.read()
 
-            view = py3Dmol.view(width=800, height=500, viewergrid=(1,2))
+            view = py3Dmol.view(width=800, height=500, viewergrid=(1,2), linked=True)
             
             # Helper to apply styles to a specific viewer in the grid
             def apply_comparison_style(v, model_data, viewer_idx):
@@ -183,8 +183,6 @@ with tabs[1]:
 
             apply_comparison_style(view, sol_data, (0,0))
             apply_comparison_style(view, dry_data, (0,1))
-            
-            view.setLinkedViewer(view) # Links all viewers in the grid
             
             st.subheader(f"Left: Solvated | Right: Dry")
             showmol(view, height=500, width=800)
