@@ -1,5 +1,4 @@
-streamlit
-pandas
-stmol
-py3Dmol
-ipython_genutils
+streamlit==1.45.1
+pandas==2.2.3
+py3Dmol==2.5.2
+ipython-genutils==0.2.0

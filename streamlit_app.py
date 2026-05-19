@@ -1,8 +1,9 @@
 import streamlit as st
 import pandas as pd
 import py3Dmol
-from stmol import showmol
 import os
+import base64
+from pathlib import Path
 
 # Set page config
 st.set_page_config(page_title="RNA Silicate Interactions", layout="wide")
@@ -10,10 +11,27 @@ st.set_page_config(page_title="RNA Silicate Interactions", layout="wide")
 st.title("RNA Silicate Interactions")
 st.markdown("Supporting data for RNA nucleotide interactions with silicate surfaces.")
 
+REPO_ROOT = Path(__file__).resolve().parent
+MANIFEST_PATH = REPO_ROOT / "data" / "MANIFEST.tsv"
+MAX_TEXT_PREVIEW_BYTES = 200_000
+
+
+def resolve_repo_path(path_value):
+    try:
+        candidate = Path(str(path_value)).expanduser()
+        if not candidate.is_absolute():
+            candidate = (REPO_ROOT / candidate).resolve()
+        else:
+            candidate = candidate.resolve()
+        candidate.relative_to(REPO_ROOT)
+        return candidate
+    except Exception:
+        return None
+
 @st.cache_data
 def load_manifest():
-    if os.path.exists("data/MANIFEST.tsv"):
-        df = pd.read_csv("data/MANIFEST.tsv", sep="\t").fillna("")
+    if MANIFEST_PATH.exists():
+        df = pd.read_csv(MANIFEST_PATH, sep="\t").fillna("")
         # Derive file_name and file_type
         df['file_name'] = df['repo_path'].apply(lambda x: os.path.basename(x))
         
@@ -76,10 +94,11 @@ groups = comparison_options.groupby(['surface', 'system', 'frame', 'role'])
 tabs = st.tabs(["Visualization", "Comparison", "Data Table"])
 
 def get_frame_count(xyz_path):
-    if not os.path.exists(xyz_path):
+    resolved_path = resolve_repo_path(xyz_path)
+    if resolved_path is None or not resolved_path.exists():
         return 0
     try:
-        with open(xyz_path, "r") as f:
+        with resolved_path.open("r") as f:
             first_line = f.readline().strip()
             if not first_line.isdigit():
                 return 1
@@ -89,15 +108,29 @@ def get_frame_count(xyz_path):
             # Count occurrences of the atom count at the start of a frame
             # This is a simple heuristic for XYZ trajectories
             return content.count(f"\n{num_atoms}\n") + (1 if content.startswith(str(num_atoms)) else 0)
-    except:
+    except (OSError, ValueError):
         return 1
 
 @st.cache_data
 def get_xyz_data(path):
-    if not os.path.exists(path):
+    resolved_path = resolve_repo_path(path)
+    if resolved_path is None or not resolved_path.exists():
         return None
-    with open(path, "r") as f:
+    with resolved_path.open("r") as f:
         return f.read()
+
+
+@st.cache_data
+def get_text_preview(path, max_bytes=MAX_TEXT_PREVIEW_BYTES):
+    resolved_path = resolve_repo_path(path)
+    if resolved_path is None or not resolved_path.exists():
+        return None, 0, False
+
+    file_size = resolved_path.stat().st_size
+    with resolved_path.open("r", errors="replace") as f:
+        preview = f.read(max_bytes)
+    was_truncated = file_size > max_bytes
+    return preview, file_size, was_truncated
 
 def render_xyz(xyz_path, title=None, height=600, width=1000, frame_idx=None):
     xyz_data = get_xyz_data(xyz_path)
@@ -133,7 +166,9 @@ def render_xyz(xyz_path, title=None, height=600, width=1000, frame_idx=None):
     view.zoomTo() # Always zoom to ensure visibility in new iframe
     if title:
         st.subheader(title)
-    showmol(view, height=height, width=width)
+    html = view._make_html()
+    encoded_html = base64.b64encode(html.encode("utf-8")).decode("ascii")
+    st.iframe(f"data:text/html;base64,{encoded_html}", height=height, width=width)
 
 with tabs[0]:
     st.header("File Viewer")
@@ -148,6 +183,11 @@ with tabs[0]:
         )
         selected_file = selectable_files.loc[selected_file_row]
         path = selected_file['repo_path']
+        resolved_path = resolve_repo_path(path)
+
+        if resolved_path is None:
+            st.error("Invalid file path in manifest entry.")
+            st.stop()
         
         if path.endswith('.xyz'):
             is_trj = path.lower().endswith("_trj.xyz")
@@ -166,12 +206,22 @@ with tabs[0]:
             render_xyz(path, f"Visualizing: {selected_file['file_name']}", frame_idx=frame_to_show)
         else:
             st.subheader(f"Viewing: {selected_file['file_name']}")
-            if os.path.exists(path):
-                with open(path, "r") as f:
-                    content = f.read()
-                st.code(content, language="text")
-            else:
+            content, file_size, was_truncated = get_text_preview(path)
+            if content is None:
                 st.error(f"File not found: {path}")
+            else:
+                if was_truncated:
+                    st.warning(
+                        f"Showing first {MAX_TEXT_PREVIEW_BYTES:,} bytes of {file_size:,} byte file. "
+                        "Use download to view full content."
+                    )
+                st.code(content, language="text")
+                st.download_button(
+                    "Download full file",
+                    data=resolved_path.read_bytes(),
+                    file_name=selected_file['file_name'],
+                    mime="text/plain",
+                )
     else:
         st.info("No files found for current filters.")
 
@@ -304,7 +354,13 @@ with tabs[1]:
             apply_comparison_style(view, dry_data, (0,1), is_trj=is_dry_trj, frame_idx=dry_frame)
             
             st.subheader(f"Left: Solvated | Right: Dry")
-            showmol(view, height=viewer_height, width=viewer_width)
+            html = view._make_html()
+            encoded_html = base64.b64encode(html.encode("utf-8")).decode("ascii")
+            st.iframe(
+                f"data:text/html;base64,{encoded_html}",
+                height=viewer_height,
+                width=viewer_width,
+            )
         else:
             # Separate columns
             col1, col2 = st.columns(2)
@@ -335,7 +391,8 @@ with tabs[1]:
 
 with tabs[2]:
     st.header("Filtered Data")
-    st.dataframe(filtered_df)
+    safe_df = filtered_df.drop(columns=["source_path"], errors="ignore")
+    st.dataframe(safe_df)
 
 st.sidebar.markdown("---")
 st.sidebar.info("RNA Silicate Interactions Streamlit App")
