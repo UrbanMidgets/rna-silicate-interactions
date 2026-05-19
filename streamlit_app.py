@@ -14,8 +14,18 @@ st.markdown("Supporting data for RNA nucleotide interactions with silicate surfa
 def load_manifest():
     if os.path.exists("data/MANIFEST.tsv"):
         df = pd.read_csv("data/MANIFEST.tsv", sep="\t").fillna("")
-        # Derive file_name from repo_path
+        # Derive file_name and file_type
         df['file_name'] = df['repo_path'].apply(lambda x: os.path.basename(x))
+        
+        def classify(path):
+            p = path.lower()
+            if p.endswith("_trj.xyz"): return "trajectory"
+            if p.endswith(".xyz"): return "structure"
+            if p.endswith(".inp"): return "input"
+            if p.endswith(".out"): return "output"
+            return "other"
+            
+        df['file_type'] = df['repo_path'].apply(classify)
         return df
     return pd.DataFrame()
 
@@ -71,12 +81,18 @@ def render_xyz(xyz_path, title=None, height=600, width=1000):
         xyz_data = f.read()
 
     view = py3Dmol.view(width=width, height=height)
-    view.addModel(xyz_data, "xyz")
+    
+    is_trajectory = xyz_path.lower().endswith("_trj.xyz")
+    if is_trajectory:
+        view.addModelsAsFrames(xyz_data, "xyz")
+        view.animate({'loop': 'forward', 'rebuild': True})
+    else:
+        view.addModel(xyz_data, "xyz")
 
     # Styling
     # Nucleotide: Stick + Sphere
     view.setStyle({'elem': ["C", "N", "P"]}, {'stick': {'radius': 0.18}, 'sphere': {'scale': 0.25}})
-
+    
     # Surface: Smaller sticks
     if show_surface:
         view.setStyle({'elem': ["Si", "Al", "O"]}, {'stick': {'radius': 0.12, 'opacity': 0.9}})
@@ -175,8 +191,13 @@ with tabs[1]:
             view = py3Dmol.view(width=viewer_width, height=viewer_height, viewergrid=(1,2), linked=True)
             
             # Helper to apply styles to a specific viewer in the grid
-            def apply_comparison_style(v, model_data, viewer_idx):
-                v.addModel(model_data, "xyz", viewer=viewer_idx)
+            def apply_comparison_style(v, model_data, viewer_idx, is_trj=False):
+                if is_trj:
+                    v.addModelsAsFrames(model_data, "xyz", viewer=viewer_idx)
+                    v.animate({'loop': 'forward', 'rebuild': True}, viewer=viewer_idx)
+                else:
+                    v.addModel(model_data, "xyz", viewer=viewer_idx)
+                
                 v.setStyle({'elem': ["C", "N", "P"]}, {'stick': {'radius': 0.18}, 'sphere': {'scale': 0.25}}, viewer=viewer_idx)
                 if show_surface:
                     v.setStyle({'elem': ["Si", "Al", "O"]}, {'stick': {'radius': 0.12, 'opacity': 0.9}}, viewer=viewer_idx)
@@ -185,8 +206,8 @@ with tabs[1]:
                 v.setStyle({'elem': "H"}, {'line': {'linewidth': 0.5}}, viewer=viewer_idx)
                 v.zoomTo(viewer=viewer_idx)
 
-            apply_comparison_style(view, sol_data, (0,0))
-            apply_comparison_style(view, dry_data, (0,1))
+            apply_comparison_style(view, sol_data, (0,0), is_trj=solvated_file['repo_path'].lower().endswith("_trj.xyz"))
+            apply_comparison_style(view, dry_data, (0,1), is_trj=dry_file['repo_path'].lower().endswith("_trj.xyz"))
             
             st.subheader(f"Left: Solvated | Right: Dry")
             showmol(view, height=viewer_height, width=viewer_width)
