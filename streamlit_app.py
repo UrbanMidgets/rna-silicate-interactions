@@ -135,7 +135,118 @@ def get_text_preview(path, max_bytes=MAX_TEXT_PREVIEW_BYTES):
     was_truncated = file_size > max_bytes
     return preview, file_size, was_truncated
 
-def render_xyz(xyz_path, title=None, height=600, width=1000, frame_idx=None, fast_mode=False):
+
+import re
+
+def inject_viewer_ui(html, n_frames, stride, is_grid=False, n_sol=1, n_dry=1):
+    match = re.search(r'viewer_(\d+)', html)
+    if not match: return html
+    vid = match.group(1)
+    
+    if is_grid:
+        js_update = f'''
+            var frame_sol = Math.min(frame, {n_sol} - 1);
+            var frame_dry = Math.min(frame, {n_dry} - 1);
+            if (typeof viewergrid_{vid} !== 'undefined') {{
+                viewergrid_{vid}[0][0].setFrame(frame_sol);
+                viewergrid_{vid}[0][0].render();
+                viewergrid_{vid}[0][1].setFrame(frame_dry);
+                viewergrid_{vid}[0][1].render();
+            }}
+        '''
+        play_js = f'''
+            if (typeof viewergrid_{vid} !== 'undefined') {{
+                viewergrid_{vid}[0][0].animate({{loop: 'forward', rebuild: true}});
+                viewergrid_{vid}[0][1].animate({{loop: 'forward', rebuild: true}});
+            }}
+        '''
+        pause_js = f'''
+            if (typeof viewergrid_{vid} !== 'undefined') {{
+                viewergrid_{vid}[0][0].pause();
+                viewergrid_{vid}[0][1].pause();
+            }}
+        '''
+    else:
+        js_update = f'''
+            viewer_{vid}.setFrame(frame);
+            viewer_{vid}.render();
+        '''
+        play_js = f"viewer_{vid}.animate({{loop: 'forward', rebuild: true}});"
+        pause_js = f"viewer_{vid}.pause();"
+
+    ui_html = f'''
+    <div style="width: 100%; padding: 5px 0; display: flex; align-items: center; justify-content: center; font-family: sans-serif; box-sizing: border-box; background: white;">
+        <button id="btn_play_{vid}" style="padding: 4px 10px; cursor: pointer; border: 1px solid #ccc; background: #eee; border-radius: 4px; margin-right: 15px;">Play</button>
+        <button id="btn_prev_{vid}" style="padding: 4px 10px; cursor: pointer; border: 1px solid #ccc; background: #eee; border-radius: 4px;">&lt; Prev</button>
+        <input type="range" id="slider_{vid}" min="0" max="{n_frames - 1}" value="0" step="{stride}" style="flex-grow: 1; margin: 0 15px;">
+        <button id="btn_next_{vid}" style="padding: 4px 10px; cursor: pointer; border: 1px solid #ccc; background: #eee; border-radius: 4px;">Next &gt;</button>
+        <span id="frame_label_{vid}" style="margin-left: 15px; min-width: 80px; font-size: 14px; text-align: right;">Frame: 1 / {n_frames}</span>
+    </div>
+    <script>
+    $3Dmolpromise.then(function() {{
+        var slider = document.getElementById("slider_{vid}");
+        var lbl = document.getElementById("frame_label_{vid}");
+        var btnPrev = document.getElementById("btn_prev_{vid}");
+        var btnNext = document.getElementById("btn_next_{vid}");
+        var btnPlay = document.getElementById("btn_play_{vid}");
+        var isPlaying = false;
+        
+        function updateFrame(val) {{
+            var frame = parseInt(val);
+            {js_update}
+            lbl.innerText = "Frame: " + (frame + 1) + " / {n_frames}";
+            slider.value = frame;
+        }}
+        
+        slider.oninput = function() {{
+            if (isPlaying) {{
+                {pause_js}
+                isPlaying = false;
+                btnPlay.innerText = "Play";
+            }}
+            updateFrame(this.value);
+        }};
+        
+        btnPrev.onclick = function() {{
+            if (isPlaying) {{
+                {pause_js}
+                isPlaying = false;
+                btnPlay.innerText = "Play";
+            }}
+            var v = parseInt(slider.value) - {stride};
+            if (v >= 0) updateFrame(v);
+            else updateFrame(0);
+        }};
+        
+        btnNext.onclick = function() {{
+            if (isPlaying) {{
+                {pause_js}
+                isPlaying = false;
+                btnPlay.innerText = "Play";
+            }}
+            var v = parseInt(slider.value) + {stride};
+            if (v < {n_frames}) updateFrame(v);
+            else updateFrame({n_frames - 1});
+        }};
+        
+        btnPlay.onclick = function() {{
+            if (isPlaying) {{
+                {pause_js}
+                isPlaying = false;
+                btnPlay.innerText = "Play";
+            }} else {{
+                {play_js}
+                isPlaying = true;
+                btnPlay.innerText = "Pause";
+            }}
+        }};
+    }});
+    </script>
+    '''
+    return html + ui_html
+
+def render_xyz(xyz_path, title=None, height=600, width=1000, fast_mode=False):
+
     xyz_data = get_xyz_data(xyz_path)
     if xyz_data is None:
         st.error(f"File not found: {xyz_path}")
@@ -148,10 +259,7 @@ def render_xyz(xyz_path, title=None, height=600, width=1000, frame_idx=None, fas
     is_trajectory = xyz_path.lower().endswith("_trj.xyz")
     if is_trajectory:
         view.addModelsAsFrames(xyz_data, "xyz")
-        if frame_idx is not None:
-            view.setFrame(frame_idx)
-        else:
-            view.animate({'loop': 'forward', 'rebuild': True})
+        view.setFrame(0)
     else:
         view.addModel(xyz_data, "xyz")
 
@@ -175,6 +283,13 @@ def render_xyz(xyz_path, title=None, height=600, width=1000, frame_idx=None, fas
     if title:
         st.subheader(title)
     html = view._make_html()
+    
+    if is_trajectory:
+        n_frames = get_frame_count(xyz_path)
+        if n_frames > 1:
+            html = inject_viewer_ui(html, n_frames, trajectory_stride)
+            height += 40 # Accommodate UI
+            
     encoded_html = base64.b64encode(html.encode("utf-8")).decode("ascii")
     st.iframe(f"data:text/html;base64,{encoded_html}", height=height, width=width)
 
@@ -198,30 +313,9 @@ with tabs[0]:
             st.stop()
         
         if path.endswith('.xyz'):
-            is_trj = path.lower().endswith("_trj.xyz")
-            frame_to_show = None
-            if is_trj:
-                n_frames = get_frame_count(path)
-                if n_frames > 1:
-                    col1, col2 = st.columns([3, 1])
-                    with col1:
-                        frame_to_show = st.slider(
-                            "Frame Selector",
-                            0,
-                            n_frames - 1,
-                            0,
-                            step=trajectory_stride,
-                            key="viewer_frame_slider",
-                        )
-                    with col2:
-                        st.metric("Current Frame", f"{frame_to_show + 1} / {n_frames}")
-                    if st.checkbox("Auto Animate", value=False, key="viewer_animate"):
-                        frame_to_show = None # This triggers animation in render_xyz
-            
             render_xyz(
                 path,
                 f"Visualizing: {selected_file['file_name']}",
-                frame_idx=frame_to_show,
                 fast_mode=performance_mode,
             )
         else:
@@ -319,34 +413,8 @@ with tabs[1]:
             sol_frame = None
             dry_frame = None
             
-            if is_sol_trj or is_dry_trj:
-                st.subheader("Trajectory Controls")
-                n_sol = get_frame_count(solvated_file['repo_path']) if is_sol_trj else 1
-                n_dry = get_frame_count(dry_file['repo_path']) if is_dry_trj else 1
-                max_frames = max(n_sol, n_dry)
-                
-                # Single global slider for PyMOL-like behavior
-                global_frame = st.slider(
-                    "Global Frame Selector",
-                    0,
-                    max_frames - 1,
-                    0,
-                    step=trajectory_stride,
-                )
-                
-                # Logic: stop at last frame if shorter than current global_frame
-                sol_frame = min(global_frame, n_sol - 1) if is_sol_trj else 0
-                dry_frame = min(global_frame, n_dry - 1) if is_dry_trj else 0
-                
-                col_m1, col_m2 = st.columns(2)
-                with col_m1:
-                    st.metric("Solvated Frame", f"{sol_frame + 1} / {n_sol}")
-                with col_m2:
-                    st.metric("Dry Frame", f"{dry_frame + 1} / {n_dry}")
-                
-                if st.checkbox("Auto Animate", value=False):
-                    sol_frame = None
-                    dry_frame = None
+            n_sol = get_frame_count(solvated_file['repo_path']) if is_sol_trj else 1
+            n_dry = get_frame_count(dry_file['repo_path']) if is_dry_trj else 1
 
             # Reverting to the version the user liked
             viewer_width = 1200
@@ -355,13 +423,10 @@ with tabs[1]:
             view.setBackgroundColor('white')
             
             # Helper to apply styles to a specific viewer in the grid
-            def apply_comparison_style(v, model_data, viewer_idx, is_trj=False, frame_idx=None):
+            def apply_comparison_style(v, model_data, viewer_idx, is_trj=False):
                 if is_trj:
                     v.addModelsAsFrames(model_data, "xyz", viewer=viewer_idx)
-                    if frame_idx is not None:
-                        v.setFrame(frame_idx, viewer=viewer_idx)
-                    else:
-                        v.animate({'loop': 'forward', 'rebuild': True}, viewer=viewer_idx)
+                    v.setFrame(0, viewer=viewer_idx)
                 else:
                     v.addModel(model_data, "xyz", viewer=viewer_idx)
                 
@@ -385,11 +450,18 @@ with tabs[1]:
                 # If we don't, the molecule might be off-screen.
                 v.zoomTo(viewer=viewer_idx)
 
-            apply_comparison_style(view, sol_data, (0,0), is_trj=is_sol_trj, frame_idx=sol_frame)
-            apply_comparison_style(view, dry_data, (0,1), is_trj=is_dry_trj, frame_idx=dry_frame)
+            apply_comparison_style(view, sol_data, (0,0), is_trj=is_sol_trj)
+            apply_comparison_style(view, dry_data, (0,1), is_trj=is_dry_trj)
             
             st.subheader(f"Left: Solvated | Right: Dry")
             html = view._make_html()
+            
+            if is_sol_trj or is_dry_trj:
+                max_frames = max(n_sol, n_dry)
+                if max_frames > 1:
+                    html = inject_viewer_ui(html, max_frames, trajectory_stride, is_grid=True, n_sol=n_sol, n_dry=n_dry)
+                    viewer_height += 40
+            
             encoded_html = base64.b64encode(html.encode("utf-8")).decode("ascii")
             st.iframe(
                 f"data:text/html;base64,{encoded_html}",
@@ -401,26 +473,10 @@ with tabs[1]:
             col1, col2 = st.columns(2)
             with col1:
                 st.subheader("Solvated (Wet)")
-                is_sol_trj = solvated_file['repo_path'].lower().endswith("_trj.xyz")
-                sol_frame = None
-                if is_sol_trj:
-                    n_sol = get_frame_count(solvated_file['repo_path'])
-                    sol_frame = st.slider("Frame", 0, n_sol - 1, 0, key="sol_sep_slider")
-                    st.write(f"Frame: {sol_frame + 1} / {n_sol}")
-                    if st.checkbox("Animate", value=False, key="sol_sep_anim"):
-                        sol_frame = None
-                render_xyz(solvated_file['repo_path'], height=400, frame_idx=sol_frame, fast_mode=performance_mode)
+                render_xyz(solvated_file['repo_path'], height=400, fast_mode=performance_mode)
             with col2:
                 st.subheader("Dry")
-                is_dry_trj = dry_file['repo_path'].lower().endswith("_trj.xyz")
-                dry_frame = None
-                if is_dry_trj:
-                    n_dry = get_frame_count(dry_file['repo_path'])
-                    dry_frame = st.slider("Frame", 0, n_dry - 1, 0, key="dry_sep_slider")
-                    st.write(f"Frame: {dry_frame + 1} / {n_dry}")
-                    if st.checkbox("Animate", value=False, key="dry_sep_anim"):
-                        dry_frame = None
-                render_xyz(dry_file['repo_path'], height=400, frame_idx=dry_frame, fast_mode=performance_mode)
+                render_xyz(dry_file['repo_path'], height=400, fast_mode=performance_mode)
     else:
         st.info("No frames found with both solvated and dry .xyz files for current filters.")
 
