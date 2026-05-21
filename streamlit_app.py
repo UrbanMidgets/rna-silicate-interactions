@@ -60,22 +60,50 @@ def get_options(dataframe, column):
     opts = sorted([str(x) for x in dataframe[column].unique() if x])
     return ["All"] + opts
 
+def get_param_idx(opts, param_name, default="All", prefix=""):
+    val = st.query_params.get(param_name, default)
+    if val in opts:
+        return opts.index(val)
+    if prefix and f"{prefix}{val}" in opts:
+        return opts.index(f"{prefix}{val}")
+    return opts.index(default) if default in opts else 0
+
+def update_param(param_name, value):
+    if value == "All":
+        if param_name in st.query_params:
+            del st.query_params[param_name]
+    else:
+        # If it's structure, and value starts with 'frame', maybe strip it?
+        # Let's just keep the value as is, or if they want exactly 14 instead of frame14:
+        if param_name == "structure" and value.startswith("frame"):
+            st.query_params[param_name] = value.replace("frame", "")
+        else:
+            st.query_params[param_name] = value
+
 # Dynamic filtering logic for sidebar
 filtered_df = df.copy()
 
-surface = st.sidebar.selectbox("Surface", get_options(df, 'surface'))
+surface_opts = get_options(df, 'surface')
+surface = st.sidebar.selectbox("Surface", surface_opts, index=get_param_idx(surface_opts, "surface"))
+update_param("surface", surface)
 if surface != "All":
     filtered_df = filtered_df[filtered_df['surface'] == surface]
 
-system = st.sidebar.selectbox("System", get_options(filtered_df, 'system'))
+system_opts = get_options(filtered_df, 'system')
+system = st.sidebar.selectbox("System", system_opts, index=get_param_idx(system_opts, "nuc"))
+update_param("nuc", system)
 if system != "All":
     filtered_df = filtered_df[filtered_df['system'] == system]
 
-role = st.sidebar.selectbox("Role", get_options(filtered_df, 'role'))
+role_opts = get_options(filtered_df, 'role')
+role = st.sidebar.selectbox("Role", role_opts, index=get_param_idx(role_opts, "role"))
+update_param("role", role)
 if role != "All":
     filtered_df = filtered_df[filtered_df['role'] == role]
 
-frame = st.sidebar.selectbox("Frame", get_options(filtered_df, 'frame'))
+frame_opts = get_options(filtered_df, 'frame')
+frame = st.sidebar.selectbox("Frame", frame_opts, index=get_param_idx(frame_opts, "structure", prefix="frame"))
+update_param("structure", frame)
 if frame != "All":
     filtered_df = filtered_df[filtered_df['frame'] == frame]
 
@@ -83,6 +111,12 @@ st.sidebar.header("Settings")
 show_surface = st.sidebar.checkbox("Show Surface (Si, Al, O)", value=True)
 spin = st.sidebar.checkbox("Spin Molecule", value=False)
 performance_mode = st.sidebar.checkbox("Performance Mode", value=True)
+
+try:
+    default_trj_frame = int(st.query_params.get("trj_frame", 0))
+except ValueError:
+    default_trj_frame = 0
+
 trajectory_stride = st.sidebar.slider("Trajectory Frame Step", 1, 10, 1)
 
 st.sidebar.markdown(f"**Matches:** {len(filtered_df)}")
@@ -138,7 +172,7 @@ def get_text_preview(path, max_bytes=MAX_TEXT_PREVIEW_BYTES):
 
 import re
 
-def inject_viewer_ui(html, n_frames, stride, is_grid=False, n_sol=1, n_dry=1):
+def inject_viewer_ui(html, n_frames, stride, is_grid=False, n_sol=1, n_dry=1, start_frame=0):
     match = re.search(r'viewer_(\d+)', html)
     if not match: return html
     vid = match.group(1)
@@ -166,7 +200,7 @@ def inject_viewer_ui(html, n_frames, stride, is_grid=False, n_sol=1, n_dry=1):
     <div style="width: 100%; padding: 5px 0; display: flex; align-items: center; justify-content: center; font-family: sans-serif; box-sizing: border-box; background: white;">
         <button id="btn_play_{vid}" style="padding: 4px 10px; cursor: pointer; border: 1px solid #ccc; background: #eee; border-radius: 4px; margin-right: 15px;">Play</button>
         <button id="btn_prev_{vid}" style="padding: 4px 10px; cursor: pointer; border: 1px solid #ccc; background: #eee; border-radius: 4px;">&lt; Prev</button>
-        <input type="range" id="slider_{vid}" min="0" max="{n_frames - 1}" value="0" step="{stride}" style="flex-grow: 1; margin: 0 15px;">
+        <input type="range" id="slider_{vid}" min="0" max="{n_frames - 1}" value="{start_frame}" step="{stride}" style="flex-grow: 1; margin: 0 15px;">
         <button id="btn_next_{vid}" style="padding: 4px 10px; cursor: pointer; border: 1px solid #ccc; background: #eee; border-radius: 4px;">Next &gt;</button>
         <span id="frame_label_{vid}" style="margin-left: 15px; min-width: 80px; font-size: 14px; text-align: right;">Frame: 1 / {n_frames}</span>
     </div>
@@ -236,7 +270,7 @@ def inject_viewer_ui(html, n_frames, stride, is_grid=False, n_sol=1, n_dry=1):
     '''
     return html + ui_html
 
-def render_xyz(xyz_path, title=None, height=600, width=1000, fast_mode=False):
+def render_xyz(xyz_path, title=None, height=600, width=1000, fast_mode=False, start_frame=0):
 
     xyz_data = get_xyz_data(xyz_path)
     if xyz_data is None:
@@ -250,7 +284,7 @@ def render_xyz(xyz_path, title=None, height=600, width=1000, fast_mode=False):
     is_trajectory = xyz_path.lower().endswith("_trj.xyz")
     if is_trajectory:
         view.addModelsAsFrames(xyz_data, "xyz")
-        view.setFrame(0)
+        view.setFrame(start_frame)
     else:
         view.addModel(xyz_data, "xyz")
 
@@ -278,7 +312,7 @@ def render_xyz(xyz_path, title=None, height=600, width=1000, fast_mode=False):
     if is_trajectory:
         n_frames = get_frame_count(xyz_path)
         if n_frames > 1:
-            html = inject_viewer_ui(html, n_frames, trajectory_stride)
+            html = inject_viewer_ui(html, n_frames, trajectory_stride, start_frame=start_frame)
             height += 40 # Accommodate UI
             
     encoded_html = base64.b64encode(html.encode("utf-8")).decode("ascii")
@@ -323,6 +357,7 @@ with tabs[0]:
                 path,
                 f"Visualizing: {selected_file['file_name']}",
                 fast_mode=performance_mode,
+                start_frame=default_trj_frame,
             )
         else:
             st.subheader(f"Viewing: {selected_file['file_name']}")
@@ -429,10 +464,10 @@ with tabs[1]:
             view.setBackgroundColor('white')
             
             # Helper to apply styles to a specific viewer in the grid
-            def apply_comparison_style(v, model_data, viewer_idx, is_trj=False):
+            def apply_comparison_style(v, model_data, viewer_idx, is_trj=False, start_frame=0):
                 if is_trj:
                     v.addModelsAsFrames(model_data, "xyz", viewer=viewer_idx)
-                    v.setFrame(0, viewer=viewer_idx)
+                    v.setFrame(start_frame, viewer=viewer_idx)
                 else:
                     v.addModel(model_data, "xyz", viewer=viewer_idx)
                 
@@ -456,8 +491,8 @@ with tabs[1]:
                 # If we don't, the molecule might be off-screen.
                 v.zoomTo(viewer=viewer_idx)
 
-            apply_comparison_style(view, sol_data, (0,0), is_trj=is_sol_trj)
-            apply_comparison_style(view, dry_data, (0,1), is_trj=is_dry_trj)
+            apply_comparison_style(view, sol_data, (0,0), is_trj=is_sol_trj, start_frame=default_trj_frame)
+            apply_comparison_style(view, dry_data, (0,1), is_trj=is_dry_trj, start_frame=default_trj_frame)
             
             st.subheader(f"Left: Solvated | Right: Dry")
             html = view._make_html()
@@ -465,7 +500,7 @@ with tabs[1]:
             if is_sol_trj or is_dry_trj:
                 max_frames = max(n_sol, n_dry)
                 if max_frames > 1:
-                    html = inject_viewer_ui(html, max_frames, trajectory_stride, is_grid=True, n_sol=n_sol, n_dry=n_dry)
+                    html = inject_viewer_ui(html, max_frames, trajectory_stride, is_grid=True, n_sol=n_sol, n_dry=n_dry, start_frame=default_trj_frame)
                     viewer_height += 40
             
             encoded_html = base64.b64encode(html.encode("utf-8")).decode("ascii")
@@ -479,10 +514,10 @@ with tabs[1]:
             col1, col2 = st.columns(2)
             with col1:
                 st.subheader("Solvated (Wet)")
-                render_xyz(solvated_file['repo_path'], height=400, fast_mode=performance_mode)
+                render_xyz(solvated_file['repo_path'], height=400, fast_mode=performance_mode, start_frame=default_trj_frame)
             with col2:
                 st.subheader("Dry")
-                render_xyz(dry_file['repo_path'], height=400, fast_mode=performance_mode)
+                render_xyz(dry_file['repo_path'], height=400, fast_mode=performance_mode, start_frame=default_trj_frame)
     else:
         st.info("No frames found with both solvated and dry .xyz files for current filters.")
 
