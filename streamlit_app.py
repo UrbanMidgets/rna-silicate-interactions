@@ -397,11 +397,22 @@ with tabs[1]:
     if comp_groups:
         sync_cameras = st.checkbox("Sync Cameras", value=True)
         
+        def get_comp_idx(opts, param_name="compare"):
+            val = st.query_params.get(param_name, "")
+            if val:
+                for i, opt in enumerate(opts):
+                    if f"{opt[0]}_{opt[1]}_{opt[2]}_{opt[3]}" == val:
+                        return i
+            return 0
+
         selected_comp = st.selectbox(
             "Select Frame to Compare",
             comp_groups,
+            index=get_comp_idx(comp_groups),
             format_func=lambda x: f"{x[0]} | {x[1]} | {x[2]} ({x[3]})"
         )
+        
+        update_param("compare", f"{selected_comp[0]}_{selected_comp[1]}_{selected_comp[2]}_{selected_comp[3]}")
         
         group_df = groups.get_group(selected_comp)
         
@@ -427,17 +438,29 @@ with tabs[1]:
         solvated_files = rank_files(solvated_files, 'solvated')
         dry_files = rank_files(dry_files, 'dry')
 
+        def get_file_idx(df_subset, param_name):
+            val = st.query_params.get(param_name, "")
+            if val:
+                for i, row in enumerate(df_subset.itertuples()):
+                    if row.file_name == val:
+                        return i
+            return 0
+
         if len(solvated_files) > 1:
-            sol_idx = st.selectbox("Select Solvated File", solvated_files.index, format_func=lambda x: solvated_files.loc[x, 'file_name'], key="sol_select")
-            solvated_file = solvated_files.loc[sol_idx]
+            sol_idx_pos = st.selectbox("Select Solvated File", range(len(solvated_files)), index=get_file_idx(solvated_files, "sol_file"), format_func=lambda i: solvated_files.iloc[i]['file_name'], key="sol_select")
+            solvated_file = solvated_files.iloc[sol_idx_pos]
+            update_param("sol_file", solvated_file['file_name'])
         else:
             solvated_file = solvated_files.iloc[0]
+            update_param("sol_file", "All")
 
         if len(dry_files) > 1:
-            dry_idx = st.selectbox("Select Dry File", dry_files.index, format_func=lambda x: dry_files.loc[x, 'file_name'], key="dry_select")
-            dry_file = dry_files.loc[dry_idx]
+            dry_idx_pos = st.selectbox("Select Dry File", range(len(dry_files)), index=get_file_idx(dry_files, "dry_file"), format_func=lambda i: dry_files.iloc[i]['file_name'], key="dry_select")
+            dry_file = dry_files.iloc[dry_idx_pos]
+            update_param("dry_file", dry_file['file_name'])
         else:
             dry_file = dry_files.iloc[0]
+            update_param("dry_file", "All")
 
         if sync_cameras:
             # Combined grid view
