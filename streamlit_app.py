@@ -156,25 +156,11 @@ def inject_viewer_ui(html, n_frames, stride, is_grid=False, n_sol=1, n_dry=1):
                 window.viewergrid_{vid}[0][1].render();
             }}
         '''
-        play_js = f'''
-            if (typeof window.viewergrid_{vid} !== 'undefined' && window.viewergrid_{vid} !== null) {{
-                window.viewergrid_{vid}[0][0].animate({{loop: 'forward', rebuild: true}});
-                window.viewergrid_{vid}[0][1].animate({{loop: 'forward', rebuild: true}});
-            }}
-        '''
-        pause_js = f'''
-            if (typeof window.viewergrid_{vid} !== 'undefined' && window.viewergrid_{vid} !== null) {{
-                window.viewergrid_{vid}[0][0].pauseAnimate();
-                window.viewergrid_{vid}[0][1].pauseAnimate();
-            }}
-        '''
     else:
         js_update = f'''
             viewer_{vid}.setFrame(frame);
             viewer_{vid}.render();
         '''
-        play_js = f"viewer_{vid}.animate({{loop: 'forward', rebuild: true}});"
-        pause_js = f"viewer_{vid}.pauseAnimate();"
 
     ui_html = f'''
     <div style="width: 100%; padding: 5px 0; display: flex; align-items: center; justify-content: center; font-family: sans-serif; box-sizing: border-box; background: white;">
@@ -192,6 +178,16 @@ def inject_viewer_ui(html, n_frames, stride, is_grid=False, n_sol=1, n_dry=1):
         var btnNext = document.getElementById("btn_next_{vid}");
         var btnPlay = document.getElementById("btn_play_{vid}");
         var isPlaying = false;
+        var syncInterval = null;
+        
+        function stopAnimation() {{
+            isPlaying = false;
+            btnPlay.innerText = "Play";
+            if (syncInterval) {{
+                clearInterval(syncInterval);
+                syncInterval = null;
+            }}
+        }}
         
         function updateFrame(val) {{
             var frame = parseInt(val);
@@ -201,31 +197,19 @@ def inject_viewer_ui(html, n_frames, stride, is_grid=False, n_sol=1, n_dry=1):
         }}
         
         slider.oninput = function() {{
-            if (isPlaying) {{
-                {pause_js}
-                isPlaying = false;
-                btnPlay.innerText = "Play";
-            }}
+            if (isPlaying) stopAnimation();
             updateFrame(this.value);
         }};
         
         btnPrev.onclick = function() {{
-            if (isPlaying) {{
-                {pause_js}
-                isPlaying = false;
-                btnPlay.innerText = "Play";
-            }}
+            if (isPlaying) stopAnimation();
             var v = parseInt(slider.value) - {stride};
             if (v >= 0) updateFrame(v);
             else updateFrame(0);
         }};
         
         btnNext.onclick = function() {{
-            if (isPlaying) {{
-                {pause_js}
-                isPlaying = false;
-                btnPlay.innerText = "Play";
-            }}
+            if (isPlaying) stopAnimation();
             var v = parseInt(slider.value) + {stride};
             if (v < {n_frames}) updateFrame(v);
             else updateFrame({n_frames - 1});
@@ -233,13 +217,18 @@ def inject_viewer_ui(html, n_frames, stride, is_grid=False, n_sol=1, n_dry=1):
         
         btnPlay.onclick = function() {{
             if (isPlaying) {{
-                {pause_js}
-                isPlaying = false;
-                btnPlay.innerText = "Play";
+                stopAnimation();
             }} else {{
-                {play_js}
                 isPlaying = true;
                 btnPlay.innerText = "Pause";
+                syncInterval = setInterval(function() {{
+                    var current = parseInt(slider.value);
+                    var nextFrame = current + {stride};
+                    if (nextFrame >= {n_frames}) {{
+                        nextFrame = 0;
+                    }}
+                    updateFrame(nextFrame);
+                }}, 100);
             }}
         }};
     }});
@@ -298,8 +287,23 @@ def render_xyz(xyz_path, title=None, height=600, width=1000, fast_mode=False):
 with tabs[0]:
     st.header("File Viewer")
     
-    # Select specific file to view
     selectable_files = filtered_df.copy()
+    
+    show_all_files = st.checkbox("Include text/data files", value=False, help="By default, only 3D visualization files (.xyz) are shown.")
+    
+    def rank_viewer_file(path):
+        p = str(path).lower()
+        if p.endswith('_trj.xyz'): return 2
+        if p.endswith('.xyz'): return 1
+        return 0
+        
+    selectable_files['rank'] = selectable_files['repo_path'].apply(rank_viewer_file)
+    
+    if not show_all_files:
+        selectable_files = selectable_files[selectable_files['rank'] > 0]
+        
+    selectable_files = selectable_files.sort_values(['rank', 'repo_path'], ascending=[False, True])
+
     if not selectable_files.empty:
         selected_file_row = st.selectbox(
             "Select file to view",
