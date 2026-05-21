@@ -83,7 +83,7 @@ st.sidebar.header("Settings")
 show_surface = st.sidebar.checkbox("Show Surface (Si, Al, O)", value=True)
 spin = st.sidebar.checkbox("Spin Molecule", value=False)
 performance_mode = st.sidebar.checkbox("Performance Mode", value=True)
-trajectory_stride = st.sidebar.slider("Trajectory Frame Step", 1, 10, 2)
+trajectory_stride = st.sidebar.slider("Trajectory Frame Step", 1, 10, 1)
 
 st.sidebar.markdown(f"**Matches:** {len(filtered_df)}")
 
