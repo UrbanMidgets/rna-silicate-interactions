@@ -144,26 +144,28 @@ def inject_viewer_ui(html, n_frames, stride, is_grid=False, n_sol=1, n_dry=1):
     vid = match.group(1)
     
     if is_grid:
+        html = html.replace(f'var viewergrid_{vid}', f'window.viewergrid_{vid}')
+
         js_update = f'''
             var frame_sol = Math.min(frame, {n_sol} - 1);
             var frame_dry = Math.min(frame, {n_dry} - 1);
-            if (typeof viewergrid_{vid} !== 'undefined') {{
-                viewergrid_{vid}[0][0].setFrame(frame_sol);
-                viewergrid_{vid}[0][0].render();
-                viewergrid_{vid}[0][1].setFrame(frame_dry);
-                viewergrid_{vid}[0][1].render();
+            if (typeof window.viewergrid_{vid} !== 'undefined' && window.viewergrid_{vid} !== null) {{
+                window.viewergrid_{vid}[0][0].setFrame(frame_sol);
+                window.viewergrid_{vid}[0][0].render();
+                window.viewergrid_{vid}[0][1].setFrame(frame_dry);
+                window.viewergrid_{vid}[0][1].render();
             }}
         '''
         play_js = f'''
-            if (typeof viewergrid_{vid} !== 'undefined') {{
-                viewergrid_{vid}[0][0].animate({{loop: 'forward', rebuild: true}});
-                viewergrid_{vid}[0][1].animate({{loop: 'forward', rebuild: true}});
+            if (typeof window.viewergrid_{vid} !== 'undefined' && window.viewergrid_{vid} !== null) {{
+                window.viewergrid_{vid}[0][0].animate({{loop: 'forward', rebuild: true}});
+                window.viewergrid_{vid}[0][1].animate({{loop: 'forward', rebuild: true}});
             }}
         '''
         pause_js = f'''
-            if (typeof viewergrid_{vid} !== 'undefined') {{
-                viewergrid_{vid}[0][0].pause();
-                viewergrid_{vid}[0][1].pause();
+            if (typeof window.viewergrid_{vid} !== 'undefined' && window.viewergrid_{vid} !== null) {{
+                window.viewergrid_{vid}[0][0].pauseAnimate();
+                window.viewergrid_{vid}[0][1].pauseAnimate();
             }}
         '''
     else:
@@ -172,7 +174,7 @@ def inject_viewer_ui(html, n_frames, stride, is_grid=False, n_sol=1, n_dry=1):
             viewer_{vid}.render();
         '''
         play_js = f"viewer_{vid}.animate({{loop: 'forward', rebuild: true}});"
-        pause_js = f"viewer_{vid}.pause();"
+        pause_js = f"viewer_{vid}.pauseAnimate();"
 
     ui_html = f'''
     <div style="width: 100%; padding: 5px 0; display: flex; align-items: center; justify-content: center; font-family: sans-serif; box-sizing: border-box; background: white;">
