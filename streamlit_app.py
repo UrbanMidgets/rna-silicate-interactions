@@ -282,7 +282,7 @@ def render_xyz(xyz_path, title=None, height=600, width=1000, fast_mode=False):
             height += 40 # Accommodate UI
             
     encoded_html = base64.b64encode(html.encode("utf-8")).decode("ascii")
-    st.iframe(f"data:text/html;base64,{encoded_html}", height=height, width=width)
+    st.components.v1.iframe(f"data:text/html;base64,{encoded_html}", height=height, width=width)
 
 with tabs[0]:
     st.header("File Viewer")
@@ -469,7 +469,7 @@ with tabs[1]:
                     viewer_height += 40
             
             encoded_html = base64.b64encode(html.encode("utf-8")).decode("ascii")
-            st.iframe(
+            st.components.v1.iframe(
                 f"data:text/html;base64,{encoded_html}",
                 height=viewer_height,
                 width=viewer_width,
