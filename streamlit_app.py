@@ -169,6 +169,35 @@ def get_text_preview(path, max_bytes=MAX_TEXT_PREVIEW_BYTES):
     was_truncated = file_size > max_bytes
     return preview, file_size, was_truncated
 
+def inject_visibility_fix(html):
+    """
+    Injects an IntersectionObserver into the py3Dmol HTML to ensure that the
+    viewer resizes and renders properly when a hidden Streamlit tab becomes visible.
+    """
+    # Expose the viewers to the window object so the observer can find them
+    html = re.sub(r'var (viewer_\d+)', r'window.\1', html)
+    html = re.sub(r'var (viewergrid_\d+)', r'window.\1', html)
+    
+    script = """
+    <script>
+    $3Dmolpromise.then(function() {
+        var observer = new IntersectionObserver(function(entries) {
+            if(entries[0].isIntersecting) {
+                for(var key in window) {
+                    if(key.startsWith('viewergrid_') && window[key] !== null) {
+                        try { window[key][0][0].resize(); window[key][0][0].zoomTo(); window[key][0][0].render(); } catch(e) {}
+                        try { window[key][0][1].resize(); window[key][0][1].zoomTo(); window[key][0][1].render(); } catch(e) {}
+                    } else if(key.startsWith('viewer_') && window[key] !== null && typeof window[key].resize === 'function') {
+                        try { window[key].resize(); window[key].zoomTo(); window[key].render(); } catch(e) {}
+                    }
+                }
+            }
+        });
+        observer.observe(document.body);
+    });
+    </script>
+    """
+    return html + script
 
 import re
 
@@ -319,6 +348,7 @@ def render_xyz(xyz_path, title=None, height=600, width=1000, fast_mode=False, st
             html = inject_viewer_ui(html, n_frames, trajectory_stride, start_frame=start_frame)
             height += 60 # Accommodate UI
             
+    html = inject_visibility_fix(html)
     encoded_html = base64.b64encode(html.encode("utf-8")).decode("ascii")
     st.components.v1.iframe(f"data:text/html;base64,{encoded_html}", height=height, width=width)
 
@@ -530,6 +560,7 @@ with tabs[1]:
                     html = inject_viewer_ui(html, max_frames, trajectory_stride, is_grid=True, n_sol=n_sol, n_dry=n_dry, start_frame=default_trj_frame)
                     viewer_height += 60
             
+            html = inject_visibility_fix(html)
             encoded_html = base64.b64encode(html.encode("utf-8")).decode("ascii")
             st.components.v1.iframe(
                 f"data:text/html;base64,{encoded_html}",
