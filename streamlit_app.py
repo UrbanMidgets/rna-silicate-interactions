@@ -4,7 +4,15 @@ import py3Dmol
 import os
 import base64
 import inspect
+import numpy as np
 from pathlib import Path
+
+try:
+    from google import genai
+    from google.genai import types as genai_types
+except ImportError:
+    genai = None
+    genai_types = None
 
 # Set page config
 st.set_page_config(page_title="RNA Silicate Interactions", layout="wide")
@@ -172,6 +180,578 @@ def get_xyz_data(path):
         return None
     with resolved_path.open("r") as f:
         return f.read()
+
+
+def load_structure_dataframe(xyz_path):
+    resolved_path = resolve_repo_path(xyz_path)
+    if resolved_path is None or not resolved_path.exists():
+        return pd.DataFrame(columns=["atom", "x", "y", "z"])
+
+    with resolved_path.open("r") as f:
+        lines = [line.strip() for line in f.readlines()]
+
+    if len(lines) < 3:
+        return pd.DataFrame(columns=["atom", "x", "y", "z"])
+
+    atom_count = None
+    if lines[0].isdigit():
+        atom_count = int(lines[0])
+
+    records = []
+    start_idx = 2 if atom_count is not None else 0
+    end_idx = start_idx + atom_count if atom_count is not None else len(lines)
+
+    for line in lines[start_idx:end_idx]:
+        parts = line.split()
+        if len(parts) < 4:
+            continue
+        try:
+            records.append(
+                {
+                    "atom": parts[0],
+                    "x": float(parts[1]),
+                    "y": float(parts[2]),
+                    "z": float(parts[3]),
+                }
+            )
+        except ValueError:
+            continue
+
+    return pd.DataFrame(records)
+
+
+@st.cache_data
+def load_xyz_frames(xyz_path):
+    resolved_path = resolve_repo_path(xyz_path)
+    if resolved_path is None or not resolved_path.exists():
+        return []
+
+    with resolved_path.open("r") as f:
+        lines = [line.rstrip("\n") for line in f]
+
+    frames = []
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+        if not line:
+            i += 1
+            continue
+        if not line.isdigit():
+            break
+
+        atom_count = int(line)
+        if i + 2 + atom_count > len(lines):
+            break
+
+        records = []
+        start = i + 2
+        end = start + atom_count
+        for atom_line in lines[start:end]:
+            parts = atom_line.split()
+            if len(parts) < 4:
+                continue
+            try:
+                records.append(
+                    {
+                        "atom": parts[0],
+                        "x": float(parts[1]),
+                        "y": float(parts[2]),
+                        "z": float(parts[3]),
+                    }
+                )
+            except ValueError:
+                continue
+
+        if records:
+            frames.append(pd.DataFrame(records))
+
+        i = end
+
+    return frames
+
+
+def measure_surface_interactions(threshold: float = 3.5) -> str:
+    """Measure close adsorbate-to-silicate contacts from the active structure.
+
+    This function uses ``st.session_state.df_structure`` as the active atomic context,
+    isolates silicate atoms (Al, Si), isolates adsorbate atoms (all non-surface atoms),
+    computes full 3D Euclidean distances between those sets, and reports a concise
+    text matrix of all boundaries within ``threshold`` angstroms.
+
+    Args:
+        threshold: Distance cutoff in angstroms for defining close interactions.
+
+    Returns:
+        A compact multiline text report of close contacts sorted by distance, or a
+        clear reason if structure context is unavailable.
+    """
+    df_structure = st.session_state.get("df_structure")
+    if df_structure is None or df_structure.empty:
+        return "No active structure is loaded. Select an XYZ file first."
+
+    silicate_mask = df_structure["atom"].isin(["Al", "Si"])
+    adsorbate_mask = ~df_structure["atom"].isin(["Al", "Si", "O"])
+
+    silicate = df_structure[silicate_mask].reset_index(drop=True)
+    adsorbate = df_structure[adsorbate_mask].reset_index(drop=True)
+
+    if silicate.empty:
+        return "No silicate atoms (Al/Si) found in the active structure."
+    if adsorbate.empty:
+        return "No adsorbate atoms found in the active structure."
+
+    sil_coords = silicate[["x", "y", "z"]].to_numpy(dtype=float)
+    ads_coords = adsorbate[["x", "y", "z"]].to_numpy(dtype=float)
+
+    delta = ads_coords[:, None, :] - sil_coords[None, :, :]
+    distances = np.linalg.norm(delta, axis=2)
+    contact_pairs = np.argwhere(distances <= threshold)
+
+    if contact_pairs.size == 0:
+        return f"No adsorbate-silicate contacts found within {threshold:.2f} A."
+
+    lines = [
+        f"Found {len(contact_pairs)} contacts within {threshold:.2f} A",
+        "ads_atom | sil_atom | distance_A",
+    ]
+
+    contacts = []
+    for ads_idx, sil_idx in contact_pairs:
+        d = float(distances[ads_idx, sil_idx])
+        contacts.append((d, ads_idx, sil_idx))
+    contacts.sort(key=lambda x: x[0])
+
+    for d, ads_idx, sil_idx in contacts[:60]:
+        ads_row = adsorbate.iloc[ads_idx]
+        sil_row = silicate.iloc[sil_idx]
+        ads_label = f"{ads_row['atom']}[{ads_idx}]"
+        sil_label = f"{sil_row['atom']}[{sil_idx}]"
+        lines.append(f"{ads_label:>8} | {sil_label:>8} | {d:8.3f}")
+
+    if len(contacts) > 60:
+        lines.append(f"... truncated {len(contacts) - 60} additional contacts")
+
+    return "\n".join(lines)
+
+
+def _compute_interaction_tables_from_df(
+    df_structure,
+    hbond_distance: float = 2.6,
+    contact_distance: float = 3.5,
+    dispersion_min: float = 3.3,
+    dispersion_max: float = 4.5,
+):
+    if df_structure is None or df_structure.empty:
+        return {
+            "error": "No active structure is loaded. Select an XYZ file first.",
+            "hbond_df": pd.DataFrame(),
+            "polar_df": pd.DataFrame(),
+            "disp_df": pd.DataFrame(),
+        }
+
+    coords = df_structure[["x", "y", "z"]].to_numpy(dtype=float)
+    atoms = df_structure["atom"].to_numpy()
+
+    is_surface = np.isin(atoms, ["Al", "Si", "O"])
+    is_surface_oxygen = atoms == "O"
+    is_adsorbate = ~is_surface
+    if not np.any(is_adsorbate):
+        return {
+            "error": "No adsorbate atoms identified (all atoms classified as surface Al/Si/O).",
+            "hbond_df": pd.DataFrame(),
+            "polar_df": pd.DataFrame(),
+            "disp_df": pd.DataFrame(),
+        }
+
+    ads_idx = np.where(is_adsorbate)[0]
+    surf_idx = np.where(is_surface)[0]
+    surf_o_idx = np.where(is_surface_oxygen)[0]
+
+    ads_coords = coords[ads_idx]
+    surf_coords = coords[surf_idx]
+    dmat = np.linalg.norm(ads_coords[:, None, :] - surf_coords[None, :, :], axis=2)
+
+    # Polar contacts: adsorbate N/O/P/H to surface Al/Si/O
+    polar_ads = np.isin(atoms[ads_idx], ["N", "O", "P", "H"])
+    close_pairs = np.argwhere(dmat <= contact_distance)
+    polar_rows = []
+    for i, j in close_pairs:
+        if not polar_ads[i]:
+            continue
+        ai = int(ads_idx[i])
+        sj = int(surf_idx[j])
+        polar_rows.append(
+            {
+                "ads_atom": f"{atoms[ai]}[{ai}]",
+                "surface_atom": f"{atoms[sj]}[{sj}]",
+                "distance_A": float(dmat[i, j]),
+            }
+        )
+    polar_df = pd.DataFrame(polar_rows).sort_values("distance_A", ascending=True) if polar_rows else pd.DataFrame(columns=["ads_atom", "surface_atom", "distance_A"])
+
+    # H-bond plausibility: adsorbate H close to surface O AND H bound to adsorbate N/O donor
+    hbond_rows = []
+    h_ads_idx = ads_idx[atoms[ads_idx] == "H"]
+    donor_heavy_idx = ads_idx[np.isin(atoms[ads_idx], ["N", "O"])]
+    if h_ads_idx.size > 0 and surf_o_idx.size > 0 and donor_heavy_idx.size > 0:
+        h_coords = coords[h_ads_idx]
+        so_coords = coords[surf_o_idx]
+        donor_coords = coords[donor_heavy_idx]
+
+        # Find nearest donor heavy atom to each adsorbate H
+        h_donor_dmat = np.linalg.norm(h_coords[:, None, :] - donor_coords[None, :, :], axis=2)
+        nearest_donor_pos = np.argmin(h_donor_dmat, axis=1)
+        nearest_donor_dist = h_donor_dmat[np.arange(len(h_ads_idx)), nearest_donor_pos]
+
+        # Heuristic donor-H covalent threshold
+        plausible_donor_h = nearest_donor_dist <= 1.30
+
+        h_o_dmat = np.linalg.norm(h_coords[:, None, :] - so_coords[None, :, :], axis=2)
+        h_o_pairs = np.argwhere(h_o_dmat <= hbond_distance)
+        for hi, oi in h_o_pairs:
+            if not plausible_donor_h[hi]:
+                continue
+            h_global = int(h_ads_idx[hi])
+            o_global = int(surf_o_idx[oi])
+            donor_global = int(donor_heavy_idx[nearest_donor_pos[hi]])
+            donor_o_dist = float(np.linalg.norm(coords[donor_global] - coords[o_global]))
+            hbond_rows.append(
+                {
+                    "donor_atom": f"{atoms[donor_global]}[{donor_global}]",
+                    "h_atom": f"H[{h_global}]",
+                    "acceptor_surface_O": f"O[{o_global}]",
+                    "H_O_A": float(h_o_dmat[hi, oi]),
+                    "D_O_A": donor_o_dist,
+                }
+            )
+    hbond_df = pd.DataFrame(hbond_rows).sort_values(["H_O_A", "D_O_A"], ascending=True) if hbond_rows else pd.DataFrame(columns=["donor_atom", "h_atom", "acceptor_surface_O", "H_O_A", "D_O_A"])
+
+    # Likely dispersive shell: adsorbate C/H vs any surface atom in shell
+    disp_ads_mask = np.isin(atoms[ads_idx], ["C", "H"])
+    shell_pairs = np.argwhere((dmat >= dispersion_min) & (dmat <= dispersion_max))
+    disp_rows = []
+    for i, j in shell_pairs:
+        if not disp_ads_mask[i]:
+            continue
+        ai = int(ads_idx[i])
+        sj = int(surf_idx[j])
+        disp_rows.append(
+            {
+                "ads_atom": f"{atoms[ai]}[{ai}]",
+                "surface_atom": f"{atoms[sj]}[{sj}]",
+                "distance_A": float(dmat[i, j]),
+            }
+        )
+    disp_df = pd.DataFrame(disp_rows).sort_values("distance_A", ascending=True) if disp_rows else pd.DataFrame(columns=["ads_atom", "surface_atom", "distance_A"])
+
+    return {
+        "error": None,
+        "hbond_df": hbond_df,
+        "polar_df": polar_df,
+        "disp_df": disp_df,
+    }
+
+
+def _compute_interaction_tables(
+    hbond_distance: float = 2.6,
+    contact_distance: float = 3.5,
+    dispersion_min: float = 3.3,
+    dispersion_max: float = 4.5,
+):
+    return _compute_interaction_tables_from_df(
+        st.session_state.get("df_structure"),
+        hbond_distance=hbond_distance,
+        contact_distance=contact_distance,
+        dispersion_min=dispersion_min,
+        dispersion_max=dispersion_max,
+    )
+
+
+def characterize_surface_interactions(
+    hbond_distance: float = 2.6,
+    contact_distance: float = 3.5,
+    dispersion_min: float = 3.3,
+    dispersion_max: float = 4.5,
+) -> str:
+    """Characterize likely H-bond and dispersive contacts at the interface.
+
+    Uses ``st.session_state.df_structure`` and reports three layers of interaction:
+    1) likely hydrogen-bond-like contacts (H from adsorbate near surface O),
+    2) close polar contacts to Al/Si/O within ``contact_distance``,
+    3) likely dispersive contacts (C/H vs surface atoms in 3.3-4.5 A shell).
+
+    This is a geometric heuristic over XYZ coordinates only (no bond-order graph),
+    so outputs are intentionally labeled as "likely" rather than definitive.
+    """
+    tables = _compute_interaction_tables(
+        hbond_distance=hbond_distance,
+        contact_distance=contact_distance,
+        dispersion_min=dispersion_min,
+        dispersion_max=dispersion_max,
+    )
+    if tables["error"]:
+        return tables["error"]
+
+    hbond_df = tables["hbond_df"]
+    polar_df = tables["polar_df"]
+    disp_df = tables["disp_df"]
+
+    lines = []
+    lines.append("Interaction characterization (geometry heuristic from XYZ)")
+    lines.append(
+        f"likely_Hbond={len(hbond_df)}, polar_contacts_le_{contact_distance:.2f}A={len(polar_df)}, "
+        f"likely_dispersion_{dispersion_min:.2f}-{dispersion_max:.2f}A={len(disp_df)}"
+    )
+
+    lines.append("\nTop likely H-bond-like contacts (donor-H ... surface O):")
+    if not hbond_df.empty:
+        for row in hbond_df.head(12).itertuples(index=False):
+            lines.append(
+                f"{row.donor_atom}-{row.h_atom}...{row.acceptor_surface_O} "
+                f"H...O={row.H_O_A:6.3f} A, D...O={row.D_O_A:6.3f} A"
+            )
+    else:
+        lines.append("None under cutoff.")
+
+    lines.append(f"\nTop polar contacts <= {contact_distance:.2f} A:")
+    if not polar_df.empty:
+        for row in polar_df.head(12).itertuples(index=False):
+            lines.append(f"{row.ads_atom}...{row.surface_atom}  {row.distance_A:6.3f} A")
+    else:
+        lines.append("None under cutoff.")
+
+    lines.append(f"\nTop likely dispersive shell contacts ({dispersion_min:.2f}-{dispersion_max:.2f} A):")
+    if not disp_df.empty:
+        for row in disp_df.head(12).itertuples(index=False):
+            lines.append(f"{row.ads_atom}...{row.surface_atom}  {row.distance_A:6.3f} A")
+    else:
+        lines.append("None in shell.")
+
+    lines.append("\nNote: classifications are heuristic because XYZ lacks explicit bond topology and charges.")
+    return "\n".join(lines)
+
+
+def analyze_trajectory_interactions(frame_step: int = 1, max_frames: int = 200) -> str:
+    """Analyze interaction persistence across trajectory frames.
+
+    Iterates over trajectory frames cached in ``st.session_state.df_structure_frames`` and
+    reports frame-wise and aggregate statistics for likely H-bond-like, polar, and likely
+    dispersive contacts. This helps distinguish persistent behavior from single-frame events.
+
+    Args:
+        frame_step: Analyze every Nth frame (>=1).
+        max_frames: Maximum number of sampled frames to process.
+
+    Returns:
+        A concise multiline trajectory summary suitable for chat responses.
+    """
+    frames = st.session_state.get("df_structure_frames", [])
+    if not frames:
+        return "No trajectory frames are loaded. Select a *_trj.xyz file first."
+
+    frame_step = max(1, int(frame_step))
+    max_frames = max(1, int(max_frames))
+
+    sampled = list(range(0, len(frames), frame_step))[:max_frames]
+    if not sampled:
+        return "No frames selected for analysis."
+
+    rows = []
+    for frame_idx in sampled:
+        tables = _compute_interaction_tables_from_df(frames[frame_idx])
+        if tables["error"]:
+            continue
+        hbond_n = len(tables["hbond_df"])
+        polar_n = len(tables["polar_df"])
+        disp_n = len(tables["disp_df"])
+
+        min_polar = float(tables["polar_df"]["distance_A"].min()) if not tables["polar_df"].empty else np.nan
+        min_hbond = float(tables["hbond_df"]["H_O_A"].min()) if not tables["hbond_df"].empty else np.nan
+        rows.append(
+            {
+                "frame": frame_idx,
+                "hbond_like_count": hbond_n,
+                "polar_count": polar_n,
+                "dispersion_count": disp_n,
+                "min_H_O_A": min_hbond,
+                "min_polar_A": min_polar,
+            }
+        )
+
+    if not rows:
+        return "Trajectory analysis did not produce valid frame results."
+
+    summary_df = pd.DataFrame(rows)
+    n = len(summary_df)
+
+    hbond_occ = float((summary_df["hbond_like_count"] > 0).mean() * 100.0)
+    polar_occ = float((summary_df["polar_count"] > 0).mean() * 100.0)
+    disp_occ = float((summary_df["dispersion_count"] > 0).mean() * 100.0)
+
+    best_hbond_frame = int(summary_df.sort_values("hbond_like_count", ascending=False).iloc[0]["frame"])
+    best_polar_frame = int(summary_df.sort_values("polar_count", ascending=False).iloc[0]["frame"])
+
+    lines = [
+        f"Trajectory summary across {n} sampled frames (step={frame_step}, total_frames={len(frames)}):",
+        (
+            f"H-bond-like occupancy={hbond_occ:.1f}%, polar occupancy={polar_occ:.1f}%, "
+            f"dispersion occupancy={disp_occ:.1f}%"
+        ),
+        (
+            f"Mean counts: H-bond-like={summary_df['hbond_like_count'].mean():.2f}, "
+            f"polar={summary_df['polar_count'].mean():.2f}, dispersion={summary_df['dispersion_count'].mean():.2f}"
+        ),
+        (
+            f"Strongest H-bond-like frame={best_hbond_frame} (count={int(summary_df['hbond_like_count'].max())}), "
+            f"strongest polar-contact frame={best_polar_frame} (count={int(summary_df['polar_count'].max())})"
+        ),
+    ]
+
+    if summary_df["min_H_O_A"].notna().any():
+        lines.append(f"Shortest H...O observed: {summary_df['min_H_O_A'].min():.3f} A")
+    if summary_df["min_polar_A"].notna().any():
+        lines.append(f"Shortest polar contact observed: {summary_df['min_polar_A'].min():.3f} A")
+
+    return "\n".join(lines)
+
+
+def render_gemini_advisor(active_xyz_path):
+    st.subheader("Gemini Chemistry Advisor")
+    st.caption("Ask chemical questions about the active structure and run local interaction analysis.")
+
+    if not active_xyz_path:
+        st.info("Select an XYZ file in the viewer to enable structural analysis context.")
+        return
+
+    is_traj_file = str(active_xyz_path).lower().endswith("_trj.xyz")
+    frame_mode = "Current frame"
+    frame_idx = 0
+    frame_step = 1
+
+    if is_traj_file:
+        frames = load_xyz_frames(active_xyz_path)
+        st.session_state.df_structure_frames = frames
+        st.session_state.df_structure_source = active_xyz_path
+
+        if frames:
+            frame_mode = st.radio(
+                "Advisor analysis scope",
+                ["Current frame", "Trajectory summary"],
+                horizontal=True,
+            )
+            frame_idx = st.slider("Advisor frame", 0, len(frames) - 1, min(default_trj_frame, len(frames) - 1), 1)
+            frame_step = st.slider("Trajectory sampling step", 1, 20, 1, 1)
+            st.session_state.df_structure = frames[frame_idx]
+            st.session_state.df_structure_frame_idx = frame_idx
+            st.session_state.df_structure_frame_step = frame_step
+        else:
+            st.session_state.df_structure = pd.DataFrame(columns=["atom", "x", "y", "z"])
+            st.session_state.df_structure_frames = []
+    else:
+        df_structure = load_structure_dataframe(active_xyz_path)
+        st.session_state.df_structure = df_structure
+        st.session_state.df_structure_frames = []
+        st.session_state.df_structure_source = active_xyz_path
+
+    with st.expander("Interaction summary tables", expanded=False):
+        tables = _compute_interaction_tables()
+        if tables["error"]:
+            st.info(tables["error"])
+        else:
+            st.caption(
+                "Geometry-based heuristic tables from active XYZ. "
+                "H-bond rows include donor-H plausibility (nearest adsorbate N/O within 1.30 A)."
+            )
+            st.markdown("**Likely H-bond-like contacts (top 12)**")
+            st.dataframe(tables["hbond_df"].head(12), use_container_width=True)
+            st.markdown("**Polar contacts <= 3.5 A (top 12)**")
+            st.dataframe(tables["polar_df"].head(12), use_container_width=True)
+            st.markdown("**Likely dispersive shell 3.3-4.5 A (top 12)**")
+            st.dataframe(tables["disp_df"].head(12), use_container_width=True)
+
+    if is_traj_file and st.session_state.get("df_structure_frames"):
+        with st.expander("Trajectory interaction overview", expanded=False):
+            sampled_frames = list(range(0, len(st.session_state.df_structure_frames), frame_step))
+            traj_rows = []
+            for fi in sampled_frames:
+                tables = _compute_interaction_tables_from_df(st.session_state.df_structure_frames[fi])
+                if tables["error"]:
+                    continue
+                traj_rows.append(
+                    {
+                        "frame": fi,
+                        "hbond_like_count": len(tables["hbond_df"]),
+                        "polar_count": len(tables["polar_df"]),
+                        "dispersion_count": len(tables["disp_df"]),
+                        "min_H_O_A": float(tables["hbond_df"]["H_O_A"].min()) if not tables["hbond_df"].empty else np.nan,
+                        "min_polar_A": float(tables["polar_df"]["distance_A"].min()) if not tables["polar_df"].empty else np.nan,
+                    }
+                )
+
+            traj_df = pd.DataFrame(traj_rows)
+            if traj_df.empty:
+                st.info("No valid trajectory frame metrics available.")
+            else:
+                st.caption("Per-frame interaction metrics using the selected trajectory sampling step.")
+                st.dataframe(traj_df, use_container_width=True)
+                if frame_mode == "Trajectory summary":
+                    st.info(
+                        "Tip: ask Gemini about persistence/occupancy trends; it can call "
+                        "`analyze_trajectory_interactions(frame_step=...)` automatically."
+                    )
+
+    if genai is None:
+        st.error("google-genai is not installed. Add it to requirements and redeploy.")
+        return
+
+    if "gemini_messages" not in st.session_state:
+        st.session_state.gemini_messages = []
+
+    if "gemini_chat" not in st.session_state:
+        try:
+            client = genai.Client()
+            chat_config = None
+            if genai_types is not None:
+                chat_config = genai_types.GenerateContentConfig(
+                    system_instruction=(
+                        "You are a chemical advisor for RNA-silicate interfaces. "
+                        "Always run characterize_surface_interactions for questions about interfacial behavior, "
+                        "and run analyze_trajectory_interactions for trajectory- or persistence-related questions. "
+                        "then explain results with explicit caveats (heuristic geometry from XYZ). "
+                        "Distinguish likely H-bond-like, polar, and likely dispersive interactions."
+                    ),
+                    tools=[measure_surface_interactions, characterize_surface_interactions, analyze_trajectory_interactions],
+                )
+            st.session_state.gemini_chat = client.chats.create(
+                model="gemini-2.5-flash",
+                config=chat_config,
+            )
+        except Exception as exc:
+            st.error(f"Failed to initialize Gemini chat: {exc}")
+            return
+
+    messages_box = st.container()
+    with messages_box:
+        for message in st.session_state.gemini_messages:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
+
+    prompt = st.chat_input("Ask about interactions, geometry, or adsorption behavior")
+    if not prompt:
+        return
+
+    st.session_state.gemini_messages.append({"role": "user", "content": prompt})
+    try:
+        response = st.session_state.gemini_chat.send_message(prompt)
+        answer = getattr(response, "text", None)
+        if not answer:
+            answer = "I could not generate a text response for that query."
+        st.session_state.gemini_messages.append({"role": "assistant", "content": answer})
+    except Exception as exc:
+        err = f"Gemini request failed: {exc}"
+        st.session_state.gemini_messages.append({"role": "assistant", "content": err})
+
+    st.rerun()
 
 
 @st.cache_data
@@ -371,75 +951,85 @@ def render_xyz(xyz_path, title=None, height=600, width=1000, fast_mode=False, st
 
 with tabs[0]:
     st.header("File Viewer")
-    
-    selectable_files = filtered_df.copy()
-    
-    show_all_files = st.checkbox("Include text/data files", value=False, help="By default, only 3D visualization files (.xyz) are shown.")
-    
-    def rank_viewer_file(path):
-        p = str(path).lower()
-        if p.endswith('_trj.xyz'): return 2
-        if p.endswith('.xyz'): return 1
-        return 0
-        
-    selectable_files['rank'] = selectable_files['repo_path'].apply(rank_viewer_file)
-    
-    if not show_all_files:
-        selectable_files = selectable_files[selectable_files['rank'] > 0]
-        
-    selectable_files = selectable_files.sort_values(['rank', 'repo_path'], ascending=[False, True])
 
-    if not selectable_files.empty:
-        def get_viewer_file_idx(opts, param_name="file"):
-            val = st.query_params.get(param_name, "")
-            if val:
-                for i, idx in enumerate(opts):
-                    if selectable_files.loc[idx, 'file_name'] == val:
-                        return i
+    viewer_col, advisor_col = st.columns([2, 1])
+    active_xyz_path = None
+
+    with viewer_col:
+        selectable_files = filtered_df.copy()
+
+        show_all_files = st.checkbox("Include text/data files", value=False, help="By default, only 3D visualization files (.xyz) are shown.")
+
+        def rank_viewer_file(path):
+            p = str(path).lower()
+            if p.endswith('_trj.xyz'):
+                return 2
+            if p.endswith('.xyz'):
+                return 1
             return 0
 
-        selected_file_row = st.selectbox(
-            "Select file to view",
-            selectable_files.index,
-            index=get_viewer_file_idx(selectable_files.index),
-            format_func=lambda x: f"{selectable_files.loc[x, 'repo_path']} ({selectable_files.loc[x, 'state']})"
-        )
-        selected_file = selectable_files.loc[selected_file_row]
-        update_param("file", selected_file['file_name'])
-        path = selected_file['repo_path']
-        resolved_path = resolve_repo_path(path)
+        selectable_files['rank'] = selectable_files['repo_path'].apply(rank_viewer_file)
 
-        if resolved_path is None:
-            st.error("Invalid file path in manifest entry.")
-            st.stop()
-        
-        if path.endswith('.xyz'):
-            render_xyz(
-                path,
-                f"Visualizing: {selected_file['file_name']}",
-                fast_mode=performance_mode,
-                start_frame=default_trj_frame,
+        if not show_all_files:
+            selectable_files = selectable_files[selectable_files['rank'] > 0]
+
+        selectable_files = selectable_files.sort_values(['rank', 'repo_path'], ascending=[False, True])
+
+        if not selectable_files.empty:
+            def get_viewer_file_idx(opts, param_name="file"):
+                val = st.query_params.get(param_name, "")
+                if val:
+                    for i, idx in enumerate(opts):
+                        if selectable_files.loc[idx, 'file_name'] == val:
+                            return i
+                return 0
+
+            selected_file_row = st.selectbox(
+                "Select file to view",
+                selectable_files.index,
+                index=get_viewer_file_idx(selectable_files.index),
+                format_func=lambda x: f"{selectable_files.loc[x, 'repo_path']} ({selectable_files.loc[x, 'state']})"
             )
-        else:
-            st.subheader(f"Viewing: {selected_file['file_name']}")
-            content, file_size, was_truncated = get_text_preview(path)
-            if content is None:
-                st.error(f"File not found: {path}")
-            else:
-                if was_truncated:
-                    st.warning(
-                        f"Showing first {MAX_TEXT_PREVIEW_BYTES:,} bytes of {file_size:,} byte file. "
-                        "Use download to view full content."
-                    )
-                st.code(content, language="text")
-                st.download_button(
-                    "Download full file",
-                    data=resolved_path.read_bytes(),
-                    file_name=selected_file['file_name'],
-                    mime="text/plain",
+            selected_file = selectable_files.loc[selected_file_row]
+            update_param("file", selected_file['file_name'])
+            path = selected_file['repo_path']
+            resolved_path = resolve_repo_path(path)
+
+            if resolved_path is None:
+                st.error("Invalid file path in manifest entry.")
+                st.stop()
+
+            if path.endswith('.xyz'):
+                active_xyz_path = path
+                render_xyz(
+                    path,
+                    f"Visualizing: {selected_file['file_name']}",
+                    fast_mode=performance_mode,
+                    start_frame=default_trj_frame,
                 )
-    else:
-        st.info("No files found for current filters.")
+            else:
+                st.subheader(f"Viewing: {selected_file['file_name']}")
+                content, file_size, was_truncated = get_text_preview(path)
+                if content is None:
+                    st.error(f"File not found: {path}")
+                else:
+                    if was_truncated:
+                        st.warning(
+                            f"Showing first {MAX_TEXT_PREVIEW_BYTES:,} bytes of {file_size:,} byte file. "
+                            "Use download to view full content."
+                        )
+                    st.code(content, language="text")
+                    st.download_button(
+                        "Download full file",
+                        data=resolved_path.read_bytes(),
+                        file_name=selected_file['file_name'],
+                        mime="text/plain",
+                    )
+        else:
+            st.info("No files found for current filters.")
+
+    with advisor_col:
+        render_gemini_advisor(active_xyz_path)
 
 with tabs[1]:
     st.header("Wet vs Dry Comparison")
