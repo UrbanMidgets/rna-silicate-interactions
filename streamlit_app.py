@@ -3,6 +3,7 @@ import pandas as pd
 import py3Dmol
 import os
 import base64
+import inspect
 from pathlib import Path
 
 # Set page config
@@ -135,7 +136,15 @@ if default_tab not in tab_options:
     default_tab = "Visualization"
 
 # Main content area
-tabs = st.tabs(tab_options, default=default_tab, key="active_tab", on_change=update_tab)
+tabs_kwargs = {}
+tabs_params = inspect.signature(st.tabs).parameters
+if "default" in tabs_params:
+    tabs_kwargs["default"] = default_tab
+if "key" in tabs_params:
+    tabs_kwargs["key"] = "active_tab"
+if "on_change" in tabs_params:
+    tabs_kwargs["on_change"] = update_tab
+tabs = st.tabs(tab_options, **tabs_kwargs)
 
 @st.cache_data
 def get_frame_count(xyz_path):
@@ -434,21 +443,133 @@ with tabs[0]:
 
 with tabs[1]:
     st.header("Wet vs Dry Comparison")
-    
-    # Find frames that have both solvated and dry states
-    comp_groups = []
-    for name, group in groups:
-        states = group['state'].unique()
-        # Only include if both solvated and dry states exist AND have xyz files
-        if 'solvated' in states and 'dry' in states:
-            solvated_xyz = group[(group['state'] == 'solvated') & (group['repo_path'].str.endswith('.xyz'))]
-            dry_xyz = group[(group['state'] == 'dry') & (group['repo_path'].str.endswith('.xyz'))]
-            if not solvated_xyz.empty and not dry_xyz.empty:
-                comp_groups.append(name)
-    
-    if comp_groups:
-        sync_cameras = st.checkbox("Sync Cameras", value=True)
-        
+
+    sync_cameras = st.checkbox("Sync Cameras", value=True)
+    compare_mode_labels = {
+        "paired": "Paired (Wet vs Dry)",
+        "custom": "Custom (Cross-Structure)",
+    }
+    compare_mode_keys = list(compare_mode_labels.keys())
+    compare_mode_default = st.query_params.get("compare_mode", "paired")
+    if compare_mode_default not in compare_mode_keys:
+        compare_mode_default = "paired"
+    compare_mode = st.selectbox(
+        "Comparison Mode",
+        compare_mode_keys,
+        index=compare_mode_keys.index(compare_mode_default),
+        format_func=lambda k: compare_mode_labels[k],
+    )
+    update_param("compare_mode", compare_mode)
+
+    def rank_files(df_subset, state_label=""):
+        if df_subset.empty:
+            return df_subset
+
+        def get_rank(row):
+            score = 0
+            path_lower = row['repo_path'].lower()
+            file_lower = row['file_name'].lower()
+            if path_lower.endswith('_trj.xyz'):
+                score += 10
+            if state_label and state_label.lower() in file_lower:
+                score += 5
+            if state_label and f"/{state_label.lower()}/" in path_lower:
+                score += 2
+            return score
+
+        df_subset = df_subset.copy()
+        df_subset['rank'] = df_subset.apply(get_rank, axis=1)
+        return df_subset.sort_values(['rank', 'repo_path'], ascending=[False, True])
+
+    def get_file_idx(df_subset, param_name):
+        val = st.query_params.get(param_name, "")
+        if val:
+            for i, row in enumerate(df_subset.itertuples()):
+                if row.file_name == val:
+                    return i
+        return 0
+
+    def render_comparison_pair(left_file, right_file, left_label, right_label):
+        left_data = get_xyz_data(left_file['repo_path'])
+        right_data = get_xyz_data(right_file['repo_path'])
+
+        if left_data is None or right_data is None:
+            st.error("Could not load comparison files.")
+            st.stop()
+
+        is_left_trj = left_file['repo_path'].lower().endswith("_trj.xyz")
+        is_right_trj = right_file['repo_path'].lower().endswith("_trj.xyz")
+
+        n_left = get_frame_count(left_file['repo_path']) if is_left_trj else 1
+        n_right = get_frame_count(right_file['repo_path']) if is_right_trj else 1
+
+        viewer_width = 1200
+        viewer_height = 600
+        view = py3Dmol.view(width=viewer_width, height=viewer_height, viewergrid=(1, 2), linked=True)
+        view.setBackgroundColor('white')
+
+        def apply_comparison_style(v, model_data, viewer_idx, is_trj=False, start_frame=0):
+            if is_trj:
+                v.addModelsAsFrames(model_data, "xyz", viewer=viewer_idx)
+                v.setFrame(start_frame, viewer=viewer_idx)
+            else:
+                v.addModel(model_data, "xyz", viewer=viewer_idx)
+
+            main_stick_radius = 0.14 if performance_mode else 0.18
+            main_sphere_scale = 0.20 if performance_mode else 0.25
+            surface_stick_radius = 0.08 if performance_mode else 0.12
+            v.setStyle({'elem': ["C", "N", "P"]}, {'stick': {'radius': main_stick_radius}, 'sphere': {'scale': main_sphere_scale}}, viewer=viewer_idx)
+            if show_surface:
+                v.setStyle({'elem': ["Si", "Al", "O"]}, {'stick': {'radius': surface_stick_radius, 'opacity': 0.9}}, viewer=viewer_idx)
+            else:
+                v.setStyle({'elem': ["Si", "Al", "O"]}, {'sphere': {'radius': 0.01, 'opacity': 0}}, viewer=viewer_idx)
+            h_stick_radius = 0.07 if performance_mode else 0.09
+            h_sphere_scale = 0.14 if performance_mode else 0.18
+            v.setStyle(
+                {'elem': "H"},
+                {'stick': {'radius': h_stick_radius, 'color': '#9aa0a6'}, 'sphere': {'scale': h_sphere_scale, 'color': '#9aa0a6'}},
+                viewer=viewer_idx,
+            )
+            v.zoomTo(viewer=viewer_idx)
+
+        apply_comparison_style(view, left_data, (0, 0), is_trj=is_left_trj, start_frame=default_trj_frame)
+        apply_comparison_style(view, right_data, (0, 1), is_trj=is_right_trj, start_frame=default_trj_frame)
+
+        st.subheader(f"Left: {left_label} | Right: {right_label}")
+        html = view._make_html()
+
+        if is_left_trj or is_right_trj:
+            max_frames = max(n_left, n_right)
+            if max_frames > 1:
+                html = inject_viewer_ui(
+                    html,
+                    max_frames,
+                    trajectory_stride,
+                    is_grid=True,
+                    n_sol=n_left,
+                    n_dry=n_right,
+                    start_frame=default_trj_frame,
+                )
+                viewer_height += 60
+
+        html = inject_visibility_fix(html)
+        encoded_html = base64.b64encode(html.encode("utf-8")).decode("ascii")
+        st.components.v1.iframe(
+            f"data:text/html;base64,{encoded_html}",
+            height=viewer_height,
+            width=viewer_width,
+        )
+
+    if compare_mode == "paired":
+        comp_groups = []
+        for name, group in groups:
+            states = group['state'].unique()
+            if 'solvated' in states and 'dry' in states:
+                solvated_xyz = group[(group['state'] == 'solvated') & (group['repo_path'].str.endswith('.xyz'))]
+                dry_xyz = group[(group['state'] == 'dry') & (group['repo_path'].str.endswith('.xyz'))]
+                if not solvated_xyz.empty and not dry_xyz.empty:
+                    comp_groups.append(name)
+
         def get_comp_idx(opts, param_name="compare"):
             val = st.query_params.get(param_name, "")
             if val:
@@ -457,145 +578,98 @@ with tabs[1]:
                         return i
             return 0
 
-        selected_comp = st.selectbox(
-            "Select Frame to Compare",
-            comp_groups,
-            index=get_comp_idx(comp_groups),
-            format_func=lambda x: f"{x[0]} | {x[1]} | {x[2]} ({x[3]})"
-        )
-        
-        update_param("compare", f"{selected_comp[0]}_{selected_comp[1]}_{selected_comp[2]}_{selected_comp[3]}")
-        
-        group_df = groups.get_group(selected_comp)
-        
-        solvated_files = group_df[(group_df['state'] == 'solvated') & (group_df['repo_path'].str.endswith('.xyz'))].copy()
-        dry_files = group_df[(group_df['state'] == 'dry') & (group_df['repo_path'].str.endswith('.xyz'))].copy()
-
-        def rank_files(df_subset, state_label):
-            if df_subset.empty:
-                return df_subset
-            def get_rank(row):
-                score = 0
-                if row['repo_path'].lower().endswith('_trj.xyz'):
-                    score += 10
-                if state_label.lower() in row['file_name'].lower():
-                    score += 5
-                # Prefer files that are in a 'dry' or 'solvated' subfolder if applicable
-                if f"/{state_label.lower()}/" in row['repo_path'].lower():
-                    score += 2
-                return score
-            df_subset['rank'] = df_subset.apply(get_rank, axis=1)
-            return df_subset.sort_values('rank', ascending=False)
-
-        solvated_files = rank_files(solvated_files, 'solvated')
-        dry_files = rank_files(dry_files, 'dry')
-
-        def get_file_idx(df_subset, param_name):
-            val = st.query_params.get(param_name, "")
-            if val:
-                for i, row in enumerate(df_subset.itertuples()):
-                    if row.file_name == val:
-                        return i
-            return 0
-
-        if len(solvated_files) > 1:
-            sol_idx_pos = st.selectbox("Select Solvated File", range(len(solvated_files)), index=get_file_idx(solvated_files, "sol_file"), format_func=lambda i: solvated_files.iloc[i]['file_name'], key="sol_select")
-            solvated_file = solvated_files.iloc[sol_idx_pos]
-            update_param("sol_file", solvated_file['file_name'])
-        else:
-            solvated_file = solvated_files.iloc[0]
-            update_param("sol_file", "All")
-
-        if len(dry_files) > 1:
-            dry_idx_pos = st.selectbox("Select Dry File", range(len(dry_files)), index=get_file_idx(dry_files, "dry_file"), format_func=lambda i: dry_files.iloc[i]['file_name'], key="dry_select")
-            dry_file = dry_files.iloc[dry_idx_pos]
-            update_param("dry_file", dry_file['file_name'])
-        else:
-            dry_file = dry_files.iloc[0]
-            update_param("dry_file", "All")
-
-        if sync_cameras:
-            # Combined grid view
-            sol_data = get_xyz_data(solvated_file['repo_path'])
-            dry_data = get_xyz_data(dry_file['repo_path'])
-
-            if sol_data is None or dry_data is None:
-                st.error("Could not load comparison files.")
-                st.stop()
-
-            is_sol_trj = solvated_file['repo_path'].lower().endswith("_trj.xyz")
-            is_dry_trj = dry_file['repo_path'].lower().endswith("_trj.xyz")
-            
-            sol_frame = None
-            dry_frame = None
-            
-            n_sol = get_frame_count(solvated_file['repo_path']) if is_sol_trj else 1
-            n_dry = get_frame_count(dry_file['repo_path']) if is_dry_trj else 1
-
-            # Reverting to the version the user liked
-            viewer_width = 1200
-            viewer_height = 600
-            view = py3Dmol.view(width=viewer_width, height=viewer_height, viewergrid=(1,2), linked=True)
-            view.setBackgroundColor('white')
-            
-            # Helper to apply styles to a specific viewer in the grid
-            def apply_comparison_style(v, model_data, viewer_idx, is_trj=False, start_frame=0):
-                if is_trj:
-                    v.addModelsAsFrames(model_data, "xyz", viewer=viewer_idx)
-                    v.setFrame(start_frame, viewer=viewer_idx)
-                else:
-                    v.addModel(model_data, "xyz", viewer=viewer_idx)
-                
-                main_stick_radius = 0.14 if performance_mode else 0.18
-                main_sphere_scale = 0.20 if performance_mode else 0.25
-                surface_stick_radius = 0.08 if performance_mode else 0.12
-                v.setStyle({'elem': ["C", "N", "P"]}, {'stick': {'radius': main_stick_radius}, 'sphere': {'scale': main_sphere_scale}}, viewer=viewer_idx)
-                if show_surface:
-                    v.setStyle({'elem': ["Si", "Al", "O"]}, {'stick': {'radius': surface_stick_radius, 'opacity': 0.9}}, viewer=viewer_idx)
-                else:
-                    v.setStyle({'elem': ["Si", "Al", "O"]}, {'sphere': {'radius': 0.01, 'opacity': 0}}, viewer=viewer_idx)
-                h_stick_radius = 0.07 if performance_mode else 0.09
-                h_sphere_scale = 0.14 if performance_mode else 0.18
-                v.setStyle(
-                    {'elem': "H"},
-                    {'stick': {'radius': h_stick_radius, 'color': '#9aa0a6'}, 'sphere': {'scale': h_sphere_scale, 'color': '#9aa0a6'}},
-                    viewer=viewer_idx,
-                )
-                
-                # We MUST call zoomTo every time because a new iframe is generated by Streamlit
-                # If we don't, the molecule might be off-screen.
-                v.zoomTo(viewer=viewer_idx)
-
-            apply_comparison_style(view, sol_data, (0,0), is_trj=is_sol_trj, start_frame=default_trj_frame)
-            apply_comparison_style(view, dry_data, (0,1), is_trj=is_dry_trj, start_frame=default_trj_frame)
-            
-            st.subheader(f"Left: Solvated | Right: Dry")
-            html = view._make_html()
-            
-            if is_sol_trj or is_dry_trj:
-                max_frames = max(n_sol, n_dry)
-                if max_frames > 1:
-                    html = inject_viewer_ui(html, max_frames, trajectory_stride, is_grid=True, n_sol=n_sol, n_dry=n_dry, start_frame=default_trj_frame)
-                    viewer_height += 60
-            
-            html = inject_visibility_fix(html)
-            encoded_html = base64.b64encode(html.encode("utf-8")).decode("ascii")
-            st.components.v1.iframe(
-                f"data:text/html;base64,{encoded_html}",
-                height=viewer_height,
-                width=viewer_width,
+        if comp_groups:
+            selected_comp = st.selectbox(
+                "Select Frame to Compare",
+                comp_groups,
+                index=get_comp_idx(comp_groups),
+                format_func=lambda x: f"{x[0]} | {x[1]} | {x[2]} ({x[3]})",
             )
+
+            update_param("compare", f"{selected_comp[0]}_{selected_comp[1]}_{selected_comp[2]}_{selected_comp[3]}")
+
+            group_df = groups.get_group(selected_comp)
+            solvated_files = rank_files(group_df[(group_df['state'] == 'solvated') & (group_df['repo_path'].str.endswith('.xyz'))], 'solvated')
+            dry_files = rank_files(group_df[(group_df['state'] == 'dry') & (group_df['repo_path'].str.endswith('.xyz'))], 'dry')
+
+            if len(solvated_files) > 1:
+                sol_idx_pos = st.selectbox(
+                    "Select Solvated File",
+                    range(len(solvated_files)),
+                    index=get_file_idx(solvated_files, "sol_file"),
+                    format_func=lambda i: solvated_files.iloc[i]['file_name'],
+                    key="sol_select",
+                )
+                solvated_file = solvated_files.iloc[sol_idx_pos]
+                update_param("sol_file", solvated_file['file_name'])
+            else:
+                solvated_file = solvated_files.iloc[0]
+                update_param("sol_file", "All")
+
+            if len(dry_files) > 1:
+                dry_idx_pos = st.selectbox(
+                    "Select Dry File",
+                    range(len(dry_files)),
+                    index=get_file_idx(dry_files, "dry_file"),
+                    format_func=lambda i: dry_files.iloc[i]['file_name'],
+                    key="dry_select",
+                )
+                dry_file = dry_files.iloc[dry_idx_pos]
+                update_param("dry_file", dry_file['file_name'])
+            else:
+                dry_file = dry_files.iloc[0]
+                update_param("dry_file", "All")
+
+            if sync_cameras:
+                render_comparison_pair(solvated_file, dry_file, "Solvated", "Dry")
+            else:
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.subheader("Solvated (Wet)")
+                    render_xyz(solvated_file['repo_path'], height=400, fast_mode=performance_mode, start_frame=default_trj_frame)
+                with col2:
+                    st.subheader("Dry")
+                    render_xyz(dry_file['repo_path'], height=400, fast_mode=performance_mode, start_frame=default_trj_frame)
         else:
-            # Separate columns
-            col1, col2 = st.columns(2)
-            with col1:
-                st.subheader("Solvated (Wet)")
-                render_xyz(solvated_file['repo_path'], height=400, fast_mode=performance_mode, start_frame=default_trj_frame)
-            with col2:
-                st.subheader("Dry")
-                render_xyz(dry_file['repo_path'], height=400, fast_mode=performance_mode, start_frame=default_trj_frame)
+            st.info("No frames found with both solvated and dry .xyz files for current filters.")
+
     else:
-        st.info("No frames found with both solvated and dry .xyz files for current filters.")
+        custom_candidates = filtered_df[filtered_df['repo_path'].str.endswith('.xyz')].copy()
+        custom_candidates = rank_files(custom_candidates)
+
+        if custom_candidates.empty:
+            st.info("No .xyz files available for custom comparison with current filters.")
+        else:
+            left_idx = st.selectbox(
+                "Select Left File",
+                range(len(custom_candidates)),
+                index=get_file_idx(custom_candidates, "left_file"),
+                format_func=lambda i: f"{custom_candidates.iloc[i]['repo_path']} ({custom_candidates.iloc[i]['state']})",
+                key="custom_left_select",
+            )
+            right_idx = st.selectbox(
+                "Select Right File",
+                range(len(custom_candidates)),
+                index=get_file_idx(custom_candidates, "right_file"),
+                format_func=lambda i: f"{custom_candidates.iloc[i]['repo_path']} ({custom_candidates.iloc[i]['state']})",
+                key="custom_right_select",
+            )
+
+            left_file = custom_candidates.iloc[left_idx]
+            right_file = custom_candidates.iloc[right_idx]
+            update_param("left_file", left_file['file_name'])
+            update_param("right_file", right_file['file_name'])
+
+            if sync_cameras:
+                render_comparison_pair(left_file, right_file, left_file['file_name'], right_file['file_name'])
+            else:
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.subheader(f"Left: {left_file['file_name']}")
+                    render_xyz(left_file['repo_path'], height=400, fast_mode=performance_mode, start_frame=default_trj_frame)
+                with col2:
+                    st.subheader(f"Right: {right_file['file_name']}")
+                    render_xyz(right_file['repo_path'], height=400, fast_mode=performance_mode, start_frame=default_trj_frame)
 
 with tabs[2]:
     st.header("Filtered Data")
@@ -617,12 +691,19 @@ active_tab = st.query_params.get("tab", "Visualization")
 
 # Clean up tab-specific parameters so they don't persist incorrectly
 if active_tab == "Visualization":
-    for p in ["compare", "sol_file", "dry_file"]:
+    for p in ["compare_mode", "compare", "sol_file", "dry_file", "left_file", "right_file"]:
         current_params.pop(p, None)
 elif active_tab == "Comparison":
     current_params.pop("file", None)
+    compare_mode_value = current_params.get("compare_mode", "paired")
+    if compare_mode_value == "paired":
+        for p in ["left_file", "right_file"]:
+            current_params.pop(p, None)
+    else:
+        for p in ["compare", "sol_file", "dry_file"]:
+            current_params.pop(p, None)
 elif active_tab == "Data Table":
-    for p in ["compare", "sol_file", "dry_file", "file"]:
+    for p in ["compare_mode", "compare", "sol_file", "dry_file", "left_file", "right_file", "file"]:
         current_params.pop(p, None)
 
 # Add remaining parameters back in
