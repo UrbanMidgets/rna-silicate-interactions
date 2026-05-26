@@ -3,6 +3,7 @@ import pandas as pd
 import py3Dmol
 import os
 import base64
+import inspect
 from pathlib import Path
 
 # Set page config
@@ -135,7 +136,15 @@ if default_tab not in tab_options:
     default_tab = "Visualization"
 
 # Main content area
-tabs = st.tabs(tab_options, default=default_tab, key="active_tab", on_change=update_tab)
+tabs_kwargs = {}
+tabs_params = inspect.signature(st.tabs).parameters
+if "default" in tabs_params:
+    tabs_kwargs["default"] = default_tab
+if "key" in tabs_params:
+    tabs_kwargs["key"] = "active_tab"
+if "on_change" in tabs_params:
+    tabs_kwargs["on_change"] = update_tab
+tabs = st.tabs(tab_options, **tabs_kwargs)
 
 @st.cache_data
 def get_frame_count(xyz_path):
