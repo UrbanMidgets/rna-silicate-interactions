@@ -381,12 +381,22 @@ with tabs[0]:
     selectable_files = selectable_files.sort_values(['rank', 'repo_path'], ascending=[False, True])
 
     if not selectable_files.empty:
+        def get_viewer_file_idx(opts, param_name="file"):
+            val = st.query_params.get(param_name, "")
+            if val:
+                for i, idx in enumerate(opts):
+                    if selectable_files.loc[idx, 'file_name'] == val:
+                        return i
+            return 0
+
         selected_file_row = st.selectbox(
             "Select file to view",
             selectable_files.index,
+            index=get_viewer_file_idx(selectable_files.index),
             format_func=lambda x: f"{selectable_files.loc[x, 'repo_path']} ({selectable_files.loc[x, 'state']})"
         )
         selected_file = selectable_files.loc[selected_file_row]
+        update_param("file", selected_file['file_name'])
         path = selected_file['repo_path']
         resolved_path = resolve_repo_path(path)
 
@@ -594,3 +604,27 @@ with tabs[2]:
 
 st.sidebar.markdown("---")
 st.sidebar.info("RNA Silicate Interactions Streamlit App")
+
+# Reorder and cleanup URL query parameters
+current_params = st.query_params.to_dict()
+st.query_params.clear()
+
+# Enforce tab as the very first parameter
+if "tab" in current_params:
+    st.query_params["tab"] = current_params.pop("tab")
+
+active_tab = st.query_params.get("tab", "Visualization")
+
+# Clean up tab-specific parameters so they don't persist incorrectly
+if active_tab == "Visualization":
+    for p in ["compare", "sol_file", "dry_file"]:
+        current_params.pop(p, None)
+elif active_tab == "Comparison":
+    current_params.pop("file", None)
+elif active_tab == "Data Table":
+    for p in ["compare", "sol_file", "dry_file", "file"]:
+        current_params.pop(p, None)
+
+# Add remaining parameters back in
+for k, v in current_params.items():
+    st.query_params[k] = v
