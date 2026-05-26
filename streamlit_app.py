@@ -197,12 +197,16 @@ def inject_viewer_ui(html, n_frames, stride, is_grid=False, n_sol=1, n_dry=1, st
         '''
 
     ui_html = f'''
-    <div style="width: 100%; padding: 5px 0; display: flex; align-items: center; justify-content: center; font-family: sans-serif; box-sizing: border-box; background: white;">
+    <style>
+        /* Hide scrollbars completely in the iframe */
+        body {{ margin: 0; overflow: hidden; }}
+    </style>
+    <div style="width: 100%; padding: 5px 15px; display: flex; align-items: center; justify-content: center; font-family: sans-serif; box-sizing: border-box; background: white; overflow: hidden;">
         <button id="btn_play_{vid}" style="padding: 4px 10px; cursor: pointer; border: 1px solid #ccc; background: #eee; border-radius: 4px; margin-right: 15px;">Play</button>
         <button id="btn_prev_{vid}" style="padding: 4px 10px; cursor: pointer; border: 1px solid #ccc; background: #eee; border-radius: 4px;">&lt; Prev</button>
         <input type="range" id="slider_{vid}" min="0" max="{n_frames - 1}" value="{start_frame}" step="{stride}" style="flex-grow: 1; margin: 0 15px;">
         <button id="btn_next_{vid}" style="padding: 4px 10px; cursor: pointer; border: 1px solid #ccc; background: #eee; border-radius: 4px;">Next &gt;</button>
-        <span id="frame_label_{vid}" style="margin-left: 15px; min-width: 80px; font-size: 14px; text-align: right;">Frame: 1 / {n_frames}</span>
+        <span id="frame_label_{vid}" style="margin-left: 15px; min-width: 100px; font-size: 14px; text-align: right; white-space: nowrap;">Frame: 1 / {n_frames}</span>
     </div>
     <script>
     $3Dmolpromise.then(function() {{
@@ -313,7 +317,7 @@ def render_xyz(xyz_path, title=None, height=600, width=1000, fast_mode=False, st
         n_frames = get_frame_count(xyz_path)
         if n_frames > 1:
             html = inject_viewer_ui(html, n_frames, trajectory_stride, start_frame=start_frame)
-            height += 40 # Accommodate UI
+            height += 60 # Accommodate UI
             
     encoded_html = base64.b64encode(html.encode("utf-8")).decode("ascii")
     st.iframe(f"data:text/html;base64,{encoded_html}", height=height, width=width)
@@ -524,7 +528,7 @@ with tabs[1]:
                 max_frames = max(n_sol, n_dry)
                 if max_frames > 1:
                     html = inject_viewer_ui(html, max_frames, trajectory_stride, is_grid=True, n_sol=n_sol, n_dry=n_dry, start_frame=default_trj_frame)
-                    viewer_height += 40
+                    viewer_height += 60
             
             encoded_html = base64.b64encode(html.encode("utf-8")).decode("ascii")
             st.iframe(
