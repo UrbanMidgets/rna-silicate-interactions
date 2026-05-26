@@ -126,8 +126,16 @@ st.sidebar.markdown(f"**Matches:** {len(filtered_df)}")
 comparison_options = filtered_df[filtered_df['state'].isin(['solvated', 'dry'])]
 groups = comparison_options.groupby(['surface', 'system', 'frame', 'role'])
 
+def update_tab():
+    st.query_params["tab"] = st.session_state.active_tab
+
+tab_options = ["Visualization", "Comparison", "Data Table"]
+default_tab = st.query_params.get("tab", "Visualization")
+if default_tab not in tab_options:
+    default_tab = "Visualization"
+
 # Main content area
-tabs = st.tabs(["Visualization", "Comparison", "Data Table"])
+tabs = st.tabs(tab_options, default=default_tab, key="active_tab", on_change=update_tab)
 
 @st.cache_data
 def get_frame_count(xyz_path):
