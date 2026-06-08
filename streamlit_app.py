@@ -6,6 +6,7 @@ import base64
 import inspect
 from pathlib import Path
 import warnings
+import math
 
 import altair as alt
 import MDAnalysis as mda
@@ -24,6 +25,7 @@ REPO_ROOT = Path(__file__).resolve().parent
 MANIFEST_PATH = REPO_ROOT / "data" / "MANIFEST.tsv"
 MAX_TEXT_PREVIEW_BYTES = 200_000
 PARSER_CACHE_VERSION = "si-op-phosphate-v3"
+HARTREE_TO_KJ_MOL = 2625.499638
 
 
 def resolve_repo_path(path_value):
@@ -225,6 +227,62 @@ def get_text_preview(path, max_bytes=MAX_TEXT_PREVIEW_BYTES):
     return preview, file_size, was_truncated
 
 
+@st.cache_data(show_spinner=False)
+def parse_orca_single_point_energies(out_path, out_mtime=0, parser_cache_version=PARSER_CACHE_VERSION):
+    resolved_path = resolve_repo_path(out_path)
+    if resolved_path is None or not resolved_path.exists():
+        return pd.DataFrame()
+
+    rows = []
+    with resolved_path.open("r", encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            if "FINAL SINGLE POINT ENERGY" not in line:
+                continue
+            parts = line.split()
+            if not parts:
+                continue
+            try:
+                energy_hartree = float(parts[-1])
+            except ValueError:
+                continue
+            rows.append(
+                {
+                    "energy_record": len(rows),
+                    "energy_hartree": energy_hartree,
+                    "energy_kj_mol": energy_hartree * HARTREE_TO_KJ_MOL,
+                }
+            )
+
+    if not rows:
+        return pd.DataFrame(columns=["energy_record", "energy_hartree", "energy_kj_mol", "relative_energy_kj_mol"])
+
+    energy_df = pd.DataFrame(rows)
+    minimum_energy = energy_df["energy_hartree"].min()
+    energy_df["relative_energy_kj_mol"] = (energy_df["energy_hartree"] - minimum_energy) * HARTREE_TO_KJ_MOL
+    return energy_df
+
+
+def get_output_energy_data(out_path):
+    if not out_path:
+        return pd.DataFrame()
+    resolved_path = resolve_repo_path(out_path)
+    if resolved_path is None or not resolved_path.exists():
+        return pd.DataFrame()
+    return parse_orca_single_point_energies(str(out_path), resolved_path.stat().st_mtime, PARSER_CACHE_VERSION)
+
+
+def summarize_energy(energy_df):
+    if energy_df.empty:
+        return {}
+    final = energy_df.iloc[-1]
+    return {
+        "final_energy_hartree": float(final["energy_hartree"]),
+        "final_energy_kj_mol": float(final["energy_kj_mol"]),
+        "final_energy_record": int(final["energy_record"]),
+        "energy_record_count": int(len(energy_df)),
+    }
+
+
 def find_matching_output(row):
     group = df[
         (df['system'] == row['system'])
@@ -294,6 +352,8 @@ def render_interaction_overview(selected_file):
     matching_output = find_matching_output(selected_file)
     out_path = matching_output['repo_path'] if matching_output is not None else None
     q_df, c_df, result = parse_current_interactions(selected_file['repo_path'], out_path, PARSER_CACHE_VERSION)
+    energy_df = get_output_energy_data(out_path)
+    energy_summary = summarize_energy(energy_df)
 
     st.subheader("Trajectory Interaction Overview")
     st.caption(
@@ -309,6 +369,8 @@ def render_interaction_overview(selected_file):
             ("P-O to surface O", _format_metric(result.get("Final_PhosphateO_SurfaceO_Dist"), "A")),
             ("P-O to surface Si", _format_metric(result.get("Final_PhosphateO_SurfaceSi_Dist"), "A")),
             ("PO-siloxane COM", _format_metric(result.get("Final_PO_Siloxane_COM_Dist"), "A")),
+            ("FINAL SINGLE POINT ENERGY", _format_energy_hartree(energy_summary.get("final_energy_hartree"))),
+            ("Final energy converted", _format_energy_kj_mol(energy_summary.get("final_energy_kj_mol"))),
         ]
     )
 
@@ -347,6 +409,30 @@ def render_interaction_overview(selected_file):
                 y_tick_count=10,
             )
 
+    if energy_summary:
+        st.caption(
+            "`FINAL SINGLE POINT ENERGY` is shown for the matched ORCA output of the displayed structure. "
+            f"The value is the final record in that file ({energy_summary.get('energy_record_count')} parsed records)."
+        )
+        energy_plot = energy_df.set_index("energy_record")[["relative_energy_kj_mol"]].rename(
+            columns={
+                "relative_energy_kj_mol": (
+                    "Relative FINAL SINGLE POINT ENERGY during optimization "
+                    "(0 = lowest parsed record)"
+                )
+            }
+        )
+        render_interaction_line_chart(
+            energy_plot,
+            x_title="ORCA energy record",
+            y_title="Relative energy (kJ/mol)",
+            legend_title="Energy development",
+            height=260,
+            points=True,
+            y_zero=True,
+            y_tick_count=10,
+        )
+
     if not q_df.empty:
         bond_cols = [col for col in ["Step", "Target_Idx", "Si_Idx", "Bond_Order", "Target_Pair_Found"] if col in q_df.columns]
         q_plot = q_df.set_index("Step")[["Bond_Order"]].rename(columns={"Bond_Order": "Silicon to phosphate oxygen Mayer bond order"})
@@ -376,6 +462,33 @@ def _format_metric(value, unit=""):
             return "n/a"
         suffix = f" {unit}" if unit else ""
         return f"{float(value):.2f}{suffix}"
+    except (TypeError, ValueError):
+        return "n/a"
+
+
+def _format_energy_kj_mol(value):
+    try:
+        if value is None or pd.isna(value) or not math.isfinite(float(value)):
+            return "n/a"
+        return f"{float(value):,.0f} kJ/mol"
+    except (TypeError, ValueError):
+        return "n/a"
+
+
+def _format_energy_hartree(value):
+    try:
+        if value is None or pd.isna(value) or not math.isfinite(float(value)):
+            return "n/a"
+        return f"{float(value):.12f} Eh"
+    except (TypeError, ValueError):
+        return "n/a"
+
+
+def _format_signed_energy(value):
+    try:
+        if value is None or pd.isna(value) or not math.isfinite(float(value)):
+            return "n/a"
+        return f"{float(value):+,.2f} kJ/mol"
     except (TypeError, ValueError):
         return "n/a"
 
