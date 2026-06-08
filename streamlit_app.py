@@ -110,9 +110,11 @@ def update_param(param_name, value):
         # If it's structure, and value starts with 'frame', maybe strip it?
         # Let's just keep the value as is, or if they want exactly 14 instead of frame14:
         if param_name == "structure" and value.startswith("frame"):
-            st.query_params[param_name] = value.replace("frame", "")
+            next_value = value.replace("frame", "")
         else:
-            st.query_params[param_name] = value
+            next_value = value
+        if st.query_params.get(param_name) != next_value:
+            st.query_params[param_name] = next_value
 
 # Dynamic filtering logic for sidebar
 filtered_df = df.copy()
@@ -880,7 +882,8 @@ with tabs[0]:
             val = st.query_params.get(param_name, "")
             if val:
                 for i, idx in enumerate(opts):
-                    if selectable_files.loc[idx, 'file_name'] == val:
+                    row = selectable_files.loc[idx]
+                    if row['repo_path'] == val or row['file_name'] == val:
                         return i
             return 0
 
@@ -888,10 +891,11 @@ with tabs[0]:
             "Select file to view",
             selectable_files.index,
             index=get_viewer_file_idx(selectable_files.index),
-            format_func=lambda x: f"{selectable_files.loc[x, 'repo_path']} ({selectable_files.loc[x, 'state']})"
+            format_func=lambda x: f"{selectable_files.loc[x, 'repo_path']} ({selectable_files.loc[x, 'state']})",
+            key="viewer_file_select",
         )
         selected_file = selectable_files.loc[selected_file_row]
-        update_param("file", selected_file['file_name'])
+        update_param("file", selected_file['repo_path'])
         path = selected_file['repo_path']
         resolved_path = resolve_repo_path(path)
 
@@ -972,7 +976,7 @@ with tabs[1]:
         val = st.query_params.get(param_name, "")
         if val:
             for i, row in enumerate(df_subset.itertuples()):
-                if row.file_name == val:
+                if row.repo_path == val or row.file_name == val:
                     return i
         return 0
 
@@ -1089,7 +1093,7 @@ with tabs[1]:
                     key="sol_select",
                 )
                 solvated_file = solvated_files.iloc[sol_idx_pos]
-                update_param("sol_file", solvated_file['file_name'])
+                update_param("sol_file", solvated_file['repo_path'])
             else:
                 solvated_file = solvated_files.iloc[0]
                 update_param("sol_file", "All")
@@ -1103,7 +1107,7 @@ with tabs[1]:
                     key="dry_select",
                 )
                 dry_file = dry_files.iloc[dry_idx_pos]
-                update_param("dry_file", dry_file['file_name'])
+                update_param("dry_file", dry_file['repo_path'])
             else:
                 dry_file = dry_files.iloc[0]
                 update_param("dry_file", "All")
@@ -1145,8 +1149,8 @@ with tabs[1]:
 
             left_file = custom_candidates.iloc[left_idx]
             right_file = custom_candidates.iloc[right_idx]
-            update_param("left_file", left_file['file_name'])
-            update_param("right_file", right_file['file_name'])
+            update_param("left_file", left_file['repo_path'])
+            update_param("right_file", right_file['repo_path'])
 
             if sync_cameras:
                 render_comparison_pair(left_file, right_file, left_file['file_name'], right_file['file_name'])
@@ -1169,31 +1173,27 @@ st.sidebar.info("RNA Silicate Interactions Streamlit App")
 
 # Reorder and cleanup URL query parameters
 current_params = st.query_params.to_dict()
-st.query_params.clear()
-
-# Enforce tab as the very first parameter
-if "tab" in current_params:
-    st.query_params["tab"] = current_params.pop("tab")
-
-active_tab = st.query_params.get("tab", "Visualization")
+next_params = current_params.copy()
+active_tab = next_params.get("tab", "Visualization")
 
 # Clean up tab-specific parameters so they don't persist incorrectly
 if active_tab == "Visualization":
     for p in ["compare_mode", "compare", "sol_file", "dry_file", "left_file", "right_file"]:
-        current_params.pop(p, None)
+        next_params.pop(p, None)
 elif active_tab == "Comparison":
-    current_params.pop("file", None)
-    compare_mode_value = current_params.get("compare_mode", "paired")
+    next_params.pop("file", None)
+    compare_mode_value = next_params.get("compare_mode", "paired")
     if compare_mode_value == "paired":
         for p in ["left_file", "right_file"]:
-            current_params.pop(p, None)
+            next_params.pop(p, None)
     else:
         for p in ["compare", "sol_file", "dry_file"]:
-            current_params.pop(p, None)
+            next_params.pop(p, None)
 elif active_tab == "Data Table":
     for p in ["compare_mode", "compare", "sol_file", "dry_file", "left_file", "right_file", "file"]:
-        current_params.pop(p, None)
+        next_params.pop(p, None)
 
-# Add remaining parameters back in
-for k, v in current_params.items():
-    st.query_params[k] = v
+if next_params != current_params:
+    st.query_params.clear()
+    for k, v in next_params.items():
+        st.query_params[k] = v
