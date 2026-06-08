@@ -94,6 +94,28 @@ def get_options(dataframe, column):
     opts = sorted([str(x) for x in dataframe[column].unique() if x])
     return ["All"] + opts
 
+def get_state_options(dataframe):
+    state_order = ["solvated", "dry", "initial", "docking"]
+    states = [str(x) for x in dataframe["state"].unique() if x]
+    ordered_states = [state for state in state_order if state in states]
+    extra_states = sorted([state for state in states if state not in state_order])
+    return ["All"] + ordered_states + extra_states
+
+def format_state_option(value):
+    labels = {
+        "All": "All",
+        "solvated": "Solvated",
+        "dry": "Dry",
+        "initial": "Initial",
+        "docking": "Docking",
+    }
+    return labels.get(value, str(value).title())
+
+def format_file_option(row):
+    context = [row.get("system"), row.get("surface"), row.get("frame"), row.get("state")]
+    context = [str(value) for value in context if value]
+    return f"{row['file_name']} | {' / '.join(context)}" if context else row["file_name"]
+
 def get_param_idx(opts, param_name, default="All", prefix=""):
     val = st.query_params.get(param_name, default)
     if val in opts:
@@ -131,6 +153,17 @@ update_param("nuc", system)
 if system != "All":
     filtered_df = filtered_df[filtered_df['system'] == system]
 
+state_opts = get_state_options(filtered_df)
+solvent_state = st.sidebar.selectbox(
+    "Solvent State",
+    state_opts,
+    index=get_param_idx(state_opts, "state"),
+    format_func=format_state_option,
+)
+update_param("state", solvent_state)
+if solvent_state != "All":
+    filtered_df = filtered_df[filtered_df['state'] == solvent_state]
+
 if 'classification' in filtered_df.columns:
     class_opts = get_options(filtered_df, 'classification')
     classification = st.sidebar.selectbox("Classification", class_opts, index=get_param_idx(class_opts, "class"))
@@ -143,6 +176,8 @@ role = st.sidebar.selectbox("Role", role_opts, index=get_param_idx(role_opts, "r
 update_param("role", role)
 if role != "All":
     filtered_df = filtered_df[filtered_df['role'] == role]
+
+frame_unfiltered_df = filtered_df.copy()
 
 frame_opts = get_options(filtered_df, 'frame')
 frame = st.sidebar.selectbox("Frame", frame_opts, index=get_param_idx(frame_opts, "structure", prefix="frame"))
@@ -206,6 +241,18 @@ def get_frame_count(xyz_path):
             return content.count(f"\n{num_atoms}\n") + (1 if content.startswith(str(num_atoms)) else 0)
     except (OSError, ValueError):
         return 1
+
+@st.cache_data
+def get_xyz_atom_count(xyz_path):
+    resolved_path = resolve_repo_path(xyz_path)
+    if resolved_path is None or not resolved_path.exists():
+        return None
+    try:
+        with resolved_path.open("r") as f:
+            first_line = f.readline().strip()
+        return int(first_line)
+    except (OSError, ValueError):
+        return None
 
 @st.cache_data
 def get_xyz_data(path):
@@ -528,6 +575,81 @@ def render_comparison_energy_development(left_energy_df, right_energy_df, left_l
         ],
     )
     st.altair_chart(chart.properties(height=260), use_container_width=True)
+
+
+def render_same_setup_energy_comparison(frame_files):
+    rows = []
+    for _, file_row in frame_files.iterrows():
+        output_row = find_matching_output(file_row)
+        out_path = output_row["repo_path"] if output_row is not None else None
+        energy_df = get_output_energy_data(out_path)
+        energy = summarize_energy(energy_df)
+        atom_count = get_xyz_atom_count(file_row["repo_path"])
+        rows.append(
+            {
+                "frame": file_row["frame"],
+                "file": file_row["file_name"],
+                "atom_count": atom_count,
+                "orca_output": Path(out_path).name if out_path else "not found",
+                "final_energy_hartree": energy.get("final_energy_hartree"),
+                "final_energy_kj_mol": energy.get("final_energy_kj_mol"),
+            }
+        )
+
+    energy_table = pd.DataFrame(rows)
+    if energy_table.empty:
+        return
+
+    atom_counts = sorted([int(value) for value in energy_table["atom_count"].dropna().unique()])
+    if len(atom_counts) == 1:
+        st.caption(
+            f"Same-setup energy comparison: all selected frame representatives contain {atom_counts[0]} atoms, "
+            "so final energies are directly comparable when the ORCA method and charge are unchanged."
+        )
+    elif len(atom_counts) > 1:
+        st.warning(
+            "Selected frame representatives do not all contain the same atom count. "
+            "Use the energy values cautiously or choose a narrower setup."
+        )
+
+    valid_energy = energy_table.dropna(subset=["final_energy_kj_mol"]).copy()
+    if valid_energy.empty:
+        st.info("No matched ORCA final energies were found for this setup.")
+        st.dataframe(energy_table, use_container_width=True)
+        return
+
+    minimum_energy = valid_energy["final_energy_kj_mol"].min()
+    valid_energy["relative_final_energy_kj_mol"] = valid_energy["final_energy_kj_mol"] - minimum_energy
+    metrics = [
+        (f"{row.frame} relative final energy", _format_signed_energy(row.relative_final_energy_kj_mol))
+        for row in valid_energy.itertuples()
+    ]
+    render_metric_grid(metrics)
+
+    chart = alt.Chart(valid_energy).mark_bar(size=42).encode(
+        x=alt.X("frame:N", title="Frame", sort=list(valid_energy["frame"])),
+        y=alt.Y(
+            "relative_final_energy_kj_mol:Q",
+            title="Relative final energy (kJ/mol)",
+            scale=alt.Scale(zero=True, nice=True),
+            axis=alt.Axis(tickCount=10, grid=True),
+        ),
+        tooltip=[
+            alt.Tooltip("frame:N", title="Frame"),
+            alt.Tooltip("file:N", title="File"),
+            alt.Tooltip("atom_count:Q", title="Atom count"),
+            alt.Tooltip("final_energy_hartree:Q", title="Final energy (Hartree)", format=".10f"),
+            alt.Tooltip("final_energy_kj_mol:Q", title="Final energy (kJ/mol)", format=".2f"),
+            alt.Tooltip("relative_final_energy_kj_mol:Q", title="Relative final energy (kJ/mol)", format=".4f"),
+            alt.Tooltip("orca_output:N", title="ORCA output"),
+        ],
+    )
+    st.altair_chart(chart.properties(height=260), use_container_width=True)
+
+    display_table = energy_table.copy()
+    display_table["final_energy_hartree"] = display_table["final_energy_hartree"].map(_format_energy_hartree)
+    display_table["final_energy_kj_mol"] = display_table["final_energy_kj_mol"].map(_format_energy_kj_mol)
+    st.dataframe(display_table, use_container_width=True)
 
 
 def _format_metric(value, unit=""):
@@ -859,22 +981,22 @@ def render_xyz(xyz_path, title=None, height=600, width=1000, fast_mode=False, st
 
 with tabs[0]:
     st.header("File Viewer")
-    
-    selectable_files = filtered_df.copy()
-    
-    show_all_files = st.checkbox("Include text/data files", value=False, help="By default, only 3D visualization files (.xyz) are shown.")
+
+    show_all_files = st.checkbox(
+        "Include text/data files",
+        value=False,
+        help="By default, the native file selector only shows .xyz structure and trajectory files.",
+    )
     
     def rank_viewer_file(path):
         p = str(path).lower()
         if p.endswith('_trj.xyz'): return 2
         if p.endswith('.xyz'): return 1
         return 0
-        
+
+    xyz_files = filtered_df[filtered_df['repo_path'].str.lower().str.endswith('.xyz')].copy()
+    selectable_files = filtered_df.copy() if show_all_files else xyz_files
     selectable_files['rank'] = selectable_files['repo_path'].apply(rank_viewer_file)
-    
-    if not show_all_files:
-        selectable_files = selectable_files[selectable_files['rank'] > 0]
-        
     selectable_files = selectable_files.sort_values(['rank', 'repo_path'], ascending=[False, True])
 
     if not selectable_files.empty:
@@ -891,7 +1013,7 @@ with tabs[0]:
             "Select file to view",
             selectable_files.index,
             index=get_viewer_file_idx(selectable_files.index),
-            format_func=lambda x: f"{selectable_files.loc[x, 'repo_path']} ({selectable_files.loc[x, 'state']})",
+            format_func=lambda x: format_file_option(selectable_files.loc[x]),
             key="viewer_file_select",
         )
         selected_file = selectable_files.loc[selected_file_row]
@@ -903,7 +1025,7 @@ with tabs[0]:
             st.error("Invalid file path in manifest entry.")
             st.stop()
         
-        if path.endswith('.xyz'):
+        if path.lower().endswith('.xyz'):
             render_interaction_overview(selected_file)
             render_xyz(
                 path,
@@ -930,20 +1052,24 @@ with tabs[0]:
                     mime="text/plain",
                 )
     else:
-        st.info("No files found for current filters.")
+        if show_all_files:
+            st.info("No files found for current filters.")
+        else:
+            st.info("No .xyz files found for current filters. Enable text/data files to inspect other manifest entries.")
 
 with tabs[1]:
-    st.header("Wet vs Dry Comparison")
+    st.header("Structure Comparison")
 
     sync_cameras = st.checkbox("Sync Cameras", value=True)
     compare_mode_labels = {
+        "same_setup": "Same Setup (Across Frames)",
         "paired": "Paired (Wet vs Dry)",
         "custom": "Custom (Cross-Structure)",
     }
     compare_mode_keys = list(compare_mode_labels.keys())
-    compare_mode_default = st.query_params.get("compare_mode", "paired")
+    compare_mode_default = st.query_params.get("compare_mode", "same_setup")
     if compare_mode_default not in compare_mode_keys:
-        compare_mode_default = "paired"
+        compare_mode_default = "same_setup"
     compare_mode = st.selectbox(
         "Comparison Mode",
         compare_mode_keys,
@@ -971,6 +1097,14 @@ with tabs[1]:
         df_subset = df_subset.copy()
         df_subset['rank'] = df_subset.apply(get_rank, axis=1)
         return df_subset.sort_values(['rank', 'repo_path'], ascending=[False, True])
+
+    def select_representative_files_by_frame(df_subset):
+        if df_subset.empty:
+            return df_subset
+        ranked = rank_files(df_subset[df_subset['repo_path'].str.lower().str.endswith('.xyz')])
+        if ranked.empty:
+            return ranked
+        return ranked.groupby("frame", group_keys=False).head(1).sort_values("frame")
 
     def get_file_idx(df_subset, param_name):
         val = st.query_params.get(param_name, "")
@@ -1052,7 +1186,75 @@ with tabs[1]:
             width=viewer_width,
         )
 
-    if compare_mode == "paired":
+    if compare_mode == "same_setup":
+        setup_source = frame_unfiltered_df[frame_unfiltered_df['repo_path'].str.lower().str.endswith('.xyz')].copy()
+        setup_groups = []
+        setup_grouped = setup_source.groupby(['surface', 'system', 'state', 'role'])
+        for name, group in setup_grouped:
+            frame_files = select_representative_files_by_frame(group)
+            if frame_files['frame'].nunique() >= 2:
+                setup_groups.append(name)
+
+        def get_setup_idx(opts, param_name="setup"):
+            val = st.query_params.get(param_name, "")
+            if val:
+                for i, opt in enumerate(opts):
+                    if f"{opt[0]}_{opt[1]}_{opt[2]}_{opt[3]}" == val:
+                        return i
+            return 0
+
+        if setup_groups:
+            selected_setup = st.selectbox(
+                "Select Setup to Compare",
+                setup_groups,
+                index=get_setup_idx(setup_groups),
+                format_func=lambda x: f"{x[1]} | {x[0]} | {format_state_option(x[2])} ({x[3]})",
+                key="same_setup_select",
+            )
+            update_param("setup", f"{selected_setup[0]}_{selected_setup[1]}_{selected_setup[2]}_{selected_setup[3]}")
+
+            setup_df = setup_grouped.get_group(selected_setup)
+            frame_files = select_representative_files_by_frame(setup_df).reset_index(drop=True)
+            st.subheader("Comparable Frame Energies")
+            render_same_setup_energy_comparison(frame_files)
+
+            left_idx = st.selectbox(
+                "Select Left Frame",
+                range(len(frame_files)),
+                index=get_file_idx(frame_files, "setup_left_file"),
+                format_func=lambda i: format_file_option(frame_files.iloc[i]),
+                key="setup_left_select",
+            )
+            default_right_idx = 1 if len(frame_files) > 1 else 0
+            right_idx = st.selectbox(
+                "Select Right Frame",
+                range(len(frame_files)),
+                index=get_file_idx(frame_files, "setup_right_file") if st.query_params.get("setup_right_file") else default_right_idx,
+                format_func=lambda i: format_file_option(frame_files.iloc[i]),
+                key="setup_right_select",
+            )
+
+            left_file = frame_files.iloc[left_idx]
+            right_file = frame_files.iloc[right_idx]
+            update_param("setup_left_file", left_file['repo_path'])
+            update_param("setup_right_file", right_file['repo_path'])
+
+            left_label = str(left_file['frame']) or left_file['file_name']
+            right_label = str(right_file['frame']) or right_file['file_name']
+            if sync_cameras:
+                render_comparison_pair(left_file, right_file, left_label, right_label)
+            else:
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.subheader(f"Left: {left_label}")
+                    render_xyz(left_file['repo_path'], height=400, fast_mode=performance_mode, start_frame=default_trj_frame)
+                with col2:
+                    st.subheader(f"Right: {right_label}")
+                    render_xyz(right_file['repo_path'], height=400, fast_mode=performance_mode, start_frame=default_trj_frame)
+        else:
+            st.info("No same-setup groups with two or more .xyz frames were found for current filters.")
+
+    elif compare_mode == "paired":
         comp_groups = []
         for name, group in groups:
             states = group['state'].unique()
@@ -1136,14 +1338,14 @@ with tabs[1]:
                 "Select Left File",
                 range(len(custom_candidates)),
                 index=get_file_idx(custom_candidates, "left_file"),
-                format_func=lambda i: f"{custom_candidates.iloc[i]['repo_path']} ({custom_candidates.iloc[i]['state']})",
+                format_func=lambda i: format_file_option(custom_candidates.iloc[i]),
                 key="custom_left_select",
             )
             right_idx = st.selectbox(
                 "Select Right File",
                 range(len(custom_candidates)),
                 index=get_file_idx(custom_candidates, "right_file"),
-                format_func=lambda i: f"{custom_candidates.iloc[i]['repo_path']} ({custom_candidates.iloc[i]['state']})",
+                format_func=lambda i: format_file_option(custom_candidates.iloc[i]),
                 key="custom_right_select",
             )
 
@@ -1178,19 +1380,28 @@ active_tab = next_params.get("tab", "Visualization")
 
 # Clean up tab-specific parameters so they don't persist incorrectly
 if active_tab == "Visualization":
-    for p in ["compare_mode", "compare", "sol_file", "dry_file", "left_file", "right_file"]:
+    for p in [
+        "compare_mode", "compare", "sol_file", "dry_file", "left_file", "right_file",
+        "setup", "setup_left_file", "setup_right_file",
+    ]:
         next_params.pop(p, None)
 elif active_tab == "Comparison":
     next_params.pop("file", None)
-    compare_mode_value = next_params.get("compare_mode", "paired")
+    compare_mode_value = next_params.get("compare_mode", "same_setup")
     if compare_mode_value == "paired":
-        for p in ["left_file", "right_file"]:
+        for p in ["left_file", "right_file", "setup", "setup_left_file", "setup_right_file"]:
+            next_params.pop(p, None)
+    elif compare_mode_value == "same_setup":
+        for p in ["compare", "sol_file", "dry_file", "left_file", "right_file"]:
             next_params.pop(p, None)
     else:
-        for p in ["compare", "sol_file", "dry_file"]:
+        for p in ["compare", "sol_file", "dry_file", "setup", "setup_left_file", "setup_right_file"]:
             next_params.pop(p, None)
 elif active_tab == "Data Table":
-    for p in ["compare_mode", "compare", "sol_file", "dry_file", "left_file", "right_file", "file"]:
+    for p in [
+        "compare_mode", "compare", "sol_file", "dry_file", "left_file", "right_file",
+        "setup", "setup_left_file", "setup_right_file", "file",
+    ]:
         next_params.pop(p, None)
 
 if next_params != current_params:
