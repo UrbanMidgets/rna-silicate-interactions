@@ -90,6 +90,30 @@ if df.empty:
 # Sidebar filters
 st.sidebar.header("Filters")
 
+FILTER_QUERY_PARAMS = [
+    "surface",
+    "nuc",
+    "state",
+    "class",
+    "role",
+    "structure",
+    "file",
+    "compare",
+    "sol_file",
+    "dry_file",
+    "left_file",
+    "right_file",
+    "setup",
+    "setup_left_file",
+    "setup_right_file",
+]
+
+def reset_filters():
+    for param in FILTER_QUERY_PARAMS:
+        if param in st.query_params:
+            del st.query_params[param]
+    st.rerun()
+
 def get_options(dataframe, column):
     opts = sorted([str(x) for x in dataframe[column].unique() if x])
     return ["All"] + opts
@@ -198,6 +222,7 @@ except ValueError:
 trajectory_stride = st.sidebar.slider("Trajectory Frame Step", 1, 10, 1)
 
 st.sidebar.markdown(f"**Matches:** {len(filtered_df)}")
+st.sidebar.button("Reset filters", use_container_width=True, on_click=reset_filters)
 
 # Grouping by system/surface/frame for comparison
 # We want to identify pairs of (solvated, dry) for the same frame
