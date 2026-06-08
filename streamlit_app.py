@@ -6,6 +6,7 @@ import base64
 import inspect
 from pathlib import Path
 import warnings
+import math
 
 import altair as alt
 import MDAnalysis as mda
@@ -24,6 +25,7 @@ REPO_ROOT = Path(__file__).resolve().parent
 MANIFEST_PATH = REPO_ROOT / "data" / "MANIFEST.tsv"
 MAX_TEXT_PREVIEW_BYTES = 200_000
 PARSER_CACHE_VERSION = "si-op-phosphate-v3"
+HARTREE_TO_KJ_MOL = 2625.499638
 
 
 def resolve_repo_path(path_value):
@@ -92,6 +94,28 @@ def get_options(dataframe, column):
     opts = sorted([str(x) for x in dataframe[column].unique() if x])
     return ["All"] + opts
 
+def get_state_options(dataframe):
+    state_order = ["solvated", "dry", "initial", "docking"]
+    states = [str(x) for x in dataframe["state"].unique() if x]
+    ordered_states = [state for state in state_order if state in states]
+    extra_states = sorted([state for state in states if state not in state_order])
+    return ["All"] + ordered_states + extra_states
+
+def format_state_option(value):
+    labels = {
+        "All": "All",
+        "solvated": "Solvated",
+        "dry": "Dry",
+        "initial": "Initial",
+        "docking": "Docking",
+    }
+    return labels.get(value, str(value).title())
+
+def format_file_option(row):
+    context = [row.get("system"), row.get("surface"), row.get("frame"), row.get("state")]
+    context = [str(value) for value in context if value]
+    return f"{row['file_name']} | {' / '.join(context)}" if context else row["file_name"]
+
 def get_param_idx(opts, param_name, default="All", prefix=""):
     val = st.query_params.get(param_name, default)
     if val in opts:
@@ -108,9 +132,11 @@ def update_param(param_name, value):
         # If it's structure, and value starts with 'frame', maybe strip it?
         # Let's just keep the value as is, or if they want exactly 14 instead of frame14:
         if param_name == "structure" and value.startswith("frame"):
-            st.query_params[param_name] = value.replace("frame", "")
+            next_value = value.replace("frame", "")
         else:
-            st.query_params[param_name] = value
+            next_value = value
+        if st.query_params.get(param_name) != next_value:
+            st.query_params[param_name] = next_value
 
 # Dynamic filtering logic for sidebar
 filtered_df = df.copy()
@@ -127,6 +153,17 @@ update_param("nuc", system)
 if system != "All":
     filtered_df = filtered_df[filtered_df['system'] == system]
 
+state_opts = get_state_options(filtered_df)
+solvent_state = st.sidebar.selectbox(
+    "Solvent State",
+    state_opts,
+    index=get_param_idx(state_opts, "state"),
+    format_func=format_state_option,
+)
+update_param("state", solvent_state)
+if solvent_state != "All":
+    filtered_df = filtered_df[filtered_df['state'] == solvent_state]
+
 if 'classification' in filtered_df.columns:
     class_opts = get_options(filtered_df, 'classification')
     classification = st.sidebar.selectbox("Classification", class_opts, index=get_param_idx(class_opts, "class"))
@@ -139,6 +176,8 @@ role = st.sidebar.selectbox("Role", role_opts, index=get_param_idx(role_opts, "r
 update_param("role", role)
 if role != "All":
     filtered_df = filtered_df[filtered_df['role'] == role]
+
+frame_unfiltered_df = filtered_df.copy()
 
 frame_opts = get_options(filtered_df, 'frame')
 frame = st.sidebar.selectbox("Frame", frame_opts, index=get_param_idx(frame_opts, "structure", prefix="frame"))
@@ -204,6 +243,18 @@ def get_frame_count(xyz_path):
         return 1
 
 @st.cache_data
+def get_xyz_atom_count(xyz_path):
+    resolved_path = resolve_repo_path(xyz_path)
+    if resolved_path is None or not resolved_path.exists():
+        return None
+    try:
+        with resolved_path.open("r") as f:
+            first_line = f.readline().strip()
+        return int(first_line)
+    except (OSError, ValueError):
+        return None
+
+@st.cache_data
 def get_xyz_data(path):
     resolved_path = resolve_repo_path(path)
     if resolved_path is None or not resolved_path.exists():
@@ -223,6 +274,62 @@ def get_text_preview(path, max_bytes=MAX_TEXT_PREVIEW_BYTES):
         preview = f.read(max_bytes)
     was_truncated = file_size > max_bytes
     return preview, file_size, was_truncated
+
+
+@st.cache_data(show_spinner=False)
+def parse_orca_single_point_energies(out_path, out_mtime=0, parser_cache_version=PARSER_CACHE_VERSION):
+    resolved_path = resolve_repo_path(out_path)
+    if resolved_path is None or not resolved_path.exists():
+        return pd.DataFrame()
+
+    rows = []
+    with resolved_path.open("r", encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            if "FINAL SINGLE POINT ENERGY" not in line:
+                continue
+            parts = line.split()
+            if not parts:
+                continue
+            try:
+                energy_hartree = float(parts[-1])
+            except ValueError:
+                continue
+            rows.append(
+                {
+                    "energy_record": len(rows),
+                    "energy_hartree": energy_hartree,
+                    "energy_kj_mol": energy_hartree * HARTREE_TO_KJ_MOL,
+                }
+            )
+
+    if not rows:
+        return pd.DataFrame(columns=["energy_record", "energy_hartree", "energy_kj_mol", "relative_energy_kj_mol"])
+
+    energy_df = pd.DataFrame(rows)
+    minimum_energy = energy_df["energy_hartree"].min()
+    energy_df["relative_energy_kj_mol"] = (energy_df["energy_hartree"] - minimum_energy) * HARTREE_TO_KJ_MOL
+    return energy_df
+
+
+def get_output_energy_data(out_path):
+    if not out_path:
+        return pd.DataFrame()
+    resolved_path = resolve_repo_path(out_path)
+    if resolved_path is None or not resolved_path.exists():
+        return pd.DataFrame()
+    return parse_orca_single_point_energies(str(out_path), resolved_path.stat().st_mtime, PARSER_CACHE_VERSION)
+
+
+def summarize_energy(energy_df):
+    if energy_df.empty:
+        return {}
+    final = energy_df.iloc[-1]
+    return {
+        "final_energy_hartree": float(final["energy_hartree"]),
+        "final_energy_kj_mol": float(final["energy_kj_mol"]),
+        "final_energy_record": int(final["energy_record"]),
+        "energy_record_count": int(len(energy_df)),
+    }
 
 
 def find_matching_output(row):
@@ -294,6 +401,8 @@ def render_interaction_overview(selected_file):
     matching_output = find_matching_output(selected_file)
     out_path = matching_output['repo_path'] if matching_output is not None else None
     q_df, c_df, result = parse_current_interactions(selected_file['repo_path'], out_path, PARSER_CACHE_VERSION)
+    energy_df = get_output_energy_data(out_path)
+    energy_summary = summarize_energy(energy_df)
 
     st.subheader("Trajectory Interaction Overview")
     st.caption(
@@ -309,6 +418,8 @@ def render_interaction_overview(selected_file):
             ("P-O to surface O", _format_metric(result.get("Final_PhosphateO_SurfaceO_Dist"), "A")),
             ("P-O to surface Si", _format_metric(result.get("Final_PhosphateO_SurfaceSi_Dist"), "A")),
             ("PO-siloxane COM", _format_metric(result.get("Final_PO_Siloxane_COM_Dist"), "A")),
+            ("FINAL SINGLE POINT ENERGY", _format_energy_hartree(energy_summary.get("final_energy_hartree"))),
+            ("Final energy converted", _format_energy_kj_mol(energy_summary.get("final_energy_kj_mol"))),
         ]
     )
 
@@ -347,6 +458,30 @@ def render_interaction_overview(selected_file):
                 y_tick_count=10,
             )
 
+    if energy_summary:
+        st.caption(
+            "`FINAL SINGLE POINT ENERGY` is shown for the matched ORCA output of the displayed structure. "
+            f"The value is the final record in that file ({energy_summary.get('energy_record_count')} parsed records)."
+        )
+        energy_plot = energy_df.set_index("energy_record")[["relative_energy_kj_mol"]].rename(
+            columns={
+                "relative_energy_kj_mol": (
+                    "Relative FINAL SINGLE POINT ENERGY during optimization "
+                    "(0 = lowest parsed record)"
+                )
+            }
+        )
+        render_interaction_line_chart(
+            energy_plot,
+            x_title="ORCA energy record",
+            y_title="Relative energy (kJ/mol)",
+            legend_title="Energy development",
+            height=260,
+            points=True,
+            y_zero=True,
+            y_tick_count=10,
+        )
+
     if not q_df.empty:
         bond_cols = [col for col in ["Step", "Target_Idx", "Si_Idx", "Bond_Order", "Target_Pair_Found"] if col in q_df.columns]
         q_plot = q_df.set_index("Step")[["Bond_Order"]].rename(columns={"Bond_Order": "Silicon to phosphate oxygen Mayer bond order"})
@@ -370,12 +505,186 @@ def render_interaction_overview(selected_file):
         st.info("No matching ORCA .out file was found for this selected trajectory.")
 
 
+def render_comparison_energy_summary(left_file, right_file, left_label, right_label):
+    left_output = find_matching_output(left_file)
+    right_output = find_matching_output(right_file)
+    left_out_path = left_output['repo_path'] if left_output is not None else None
+    right_out_path = right_output['repo_path'] if right_output is not None else None
+
+    left_energy_df = get_output_energy_data(left_out_path)
+    right_energy_df = get_output_energy_data(right_out_path)
+    left_energy = summarize_energy(left_energy_df)
+    right_energy = summarize_energy(right_energy_df)
+
+    metrics = [
+        (f"{left_label} final energy (Hartree)", _format_energy_hartree(left_energy.get("final_energy_hartree"))),
+        (f"{left_label} final energy (kJ/mol)", _format_energy_kj_mol(left_energy.get("final_energy_kj_mol"))),
+        (f"{right_label} final energy (Hartree)", _format_energy_hartree(right_energy.get("final_energy_hartree"))),
+        (f"{right_label} final energy (kJ/mol)", _format_energy_kj_mol(right_energy.get("final_energy_kj_mol"))),
+    ]
+
+    if left_energy and right_energy:
+        delta_energy = right_energy["final_energy_kj_mol"] - left_energy["final_energy_kj_mol"]
+        metrics.append((f"Delta E ({right_label} - {left_label})", _format_signed_energy(delta_energy)))
+
+    render_metric_grid(metrics)
+    if left_energy or right_energy:
+        st.caption(
+            "Energies are the final `FINAL SINGLE POINT ENERGY` records from the matched ORCA outputs. "
+            "Compare absolute or delta energies only between calculations with the same composition, charge, and method."
+        )
+        render_comparison_energy_development(left_energy_df, right_energy_df, left_label, right_label)
+
+
+def render_comparison_energy_development(left_energy_df, right_energy_df, left_label, right_label):
+    traces = []
+    if not left_energy_df.empty and "relative_energy_kj_mol" in left_energy_df.columns:
+        left_trace = left_energy_df[["energy_record", "relative_energy_kj_mol"]].copy()
+        left_trace["structure"] = left_label
+        traces.append(left_trace)
+    if not right_energy_df.empty and "relative_energy_kj_mol" in right_energy_df.columns:
+        right_trace = right_energy_df[["energy_record", "relative_energy_kj_mol"]].copy()
+        right_trace["structure"] = right_label
+        traces.append(right_trace)
+
+    if not traces:
+        return
+
+    plot_df = pd.concat(traces, ignore_index=True)
+    st.caption(
+        "Energy development overlay: each curve is relative to its own lowest parsed "
+        "`FINAL SINGLE POINT ENERGY` record, so the optimization profiles can be compared on the same scale."
+    )
+    chart = alt.Chart(plot_df).mark_line(point=True).encode(
+        x=alt.X("energy_record:Q", title="ORCA energy record"),
+        y=alt.Y(
+            "relative_energy_kj_mol:Q",
+            title="Relative energy (kJ/mol)",
+            scale=alt.Scale(zero=True, nice=True),
+            axis=alt.Axis(tickCount=10, grid=True),
+        ),
+        color=alt.Color(
+            "structure:N",
+            title="Compared structure",
+            legend=alt.Legend(orient="bottom", labelLimit=0, titleLimit=0),
+        ),
+        tooltip=[
+            alt.Tooltip("structure:N", title="Structure"),
+            alt.Tooltip("energy_record:Q", title="ORCA energy record"),
+            alt.Tooltip("relative_energy_kj_mol:Q", title="Relative energy (kJ/mol)", format=".4f"),
+        ],
+    )
+    st.altair_chart(chart.properties(height=260), use_container_width=True)
+
+
+def render_same_setup_energy_comparison(frame_files):
+    rows = []
+    for _, file_row in frame_files.iterrows():
+        output_row = find_matching_output(file_row)
+        out_path = output_row["repo_path"] if output_row is not None else None
+        energy_df = get_output_energy_data(out_path)
+        energy = summarize_energy(energy_df)
+        atom_count = get_xyz_atom_count(file_row["repo_path"])
+        rows.append(
+            {
+                "frame": file_row["frame"],
+                "file": file_row["file_name"],
+                "atom_count": atom_count,
+                "orca_output": Path(out_path).name if out_path else "not found",
+                "final_energy_hartree": energy.get("final_energy_hartree"),
+                "final_energy_kj_mol": energy.get("final_energy_kj_mol"),
+            }
+        )
+
+    energy_table = pd.DataFrame(rows)
+    if energy_table.empty:
+        return
+
+    atom_counts = sorted([int(value) for value in energy_table["atom_count"].dropna().unique()])
+    if len(atom_counts) == 1:
+        st.caption(
+            f"Same-setup energy comparison: all selected frame representatives contain {atom_counts[0]} atoms, "
+            "so final energies are directly comparable when the ORCA method and charge are unchanged."
+        )
+    elif len(atom_counts) > 1:
+        st.warning(
+            "Selected frame representatives do not all contain the same atom count. "
+            "Use the energy values cautiously or choose a narrower setup."
+        )
+
+    valid_energy = energy_table.dropna(subset=["final_energy_kj_mol"]).copy()
+    if valid_energy.empty:
+        st.info("No matched ORCA final energies were found for this setup.")
+        st.dataframe(energy_table, use_container_width=True)
+        return
+
+    minimum_energy = valid_energy["final_energy_kj_mol"].min()
+    valid_energy["relative_final_energy_kj_mol"] = valid_energy["final_energy_kj_mol"] - minimum_energy
+    metrics = [
+        (f"{row.frame} relative final energy", _format_signed_energy(row.relative_final_energy_kj_mol))
+        for row in valid_energy.itertuples()
+    ]
+    render_metric_grid(metrics)
+
+    chart = alt.Chart(valid_energy).mark_bar(size=42).encode(
+        x=alt.X("frame:N", title="Frame", sort=list(valid_energy["frame"])),
+        y=alt.Y(
+            "relative_final_energy_kj_mol:Q",
+            title="Relative final energy (kJ/mol)",
+            scale=alt.Scale(zero=True, nice=True),
+            axis=alt.Axis(tickCount=10, grid=True),
+        ),
+        tooltip=[
+            alt.Tooltip("frame:N", title="Frame"),
+            alt.Tooltip("file:N", title="File"),
+            alt.Tooltip("atom_count:Q", title="Atom count"),
+            alt.Tooltip("final_energy_hartree:Q", title="Final energy (Hartree)", format=".10f"),
+            alt.Tooltip("final_energy_kj_mol:Q", title="Final energy (kJ/mol)", format=".2f"),
+            alt.Tooltip("relative_final_energy_kj_mol:Q", title="Relative final energy (kJ/mol)", format=".4f"),
+            alt.Tooltip("orca_output:N", title="ORCA output"),
+        ],
+    )
+    st.altair_chart(chart.properties(height=260), use_container_width=True)
+
+    display_table = energy_table.copy()
+    display_table["final_energy_hartree"] = display_table["final_energy_hartree"].map(_format_energy_hartree)
+    display_table["final_energy_kj_mol"] = display_table["final_energy_kj_mol"].map(_format_energy_kj_mol)
+    st.dataframe(display_table, use_container_width=True)
+
+
 def _format_metric(value, unit=""):
     try:
         if pd.isna(value):
             return "n/a"
         suffix = f" {unit}" if unit else ""
         return f"{float(value):.2f}{suffix}"
+    except (TypeError, ValueError):
+        return "n/a"
+
+
+def _format_energy_kj_mol(value):
+    try:
+        if value is None or pd.isna(value) or not math.isfinite(float(value)):
+            return "n/a"
+        return f"{float(value):,.0f} kJ/mol"
+    except (TypeError, ValueError):
+        return "n/a"
+
+
+def _format_energy_hartree(value):
+    try:
+        if value is None or pd.isna(value) or not math.isfinite(float(value)):
+            return "n/a"
+        return f"{float(value):.12f} Eh"
+    except (TypeError, ValueError):
+        return "n/a"
+
+
+def _format_signed_energy(value):
+    try:
+        if value is None or pd.isna(value) or not math.isfinite(float(value)):
+            return "n/a"
+        return f"{float(value):+,.2f} kJ/mol"
     except (TypeError, ValueError):
         return "n/a"
 
@@ -672,22 +981,22 @@ def render_xyz(xyz_path, title=None, height=600, width=1000, fast_mode=False, st
 
 with tabs[0]:
     st.header("File Viewer")
-    
-    selectable_files = filtered_df.copy()
-    
-    show_all_files = st.checkbox("Include text/data files", value=False, help="By default, only 3D visualization files (.xyz) are shown.")
+
+    show_all_files = st.checkbox(
+        "Include text/data files",
+        value=False,
+        help="By default, the native file selector only shows .xyz structure and trajectory files.",
+    )
     
     def rank_viewer_file(path):
         p = str(path).lower()
         if p.endswith('_trj.xyz'): return 2
         if p.endswith('.xyz'): return 1
         return 0
-        
+
+    xyz_files = filtered_df[filtered_df['repo_path'].str.lower().str.endswith('.xyz')].copy()
+    selectable_files = filtered_df.copy() if show_all_files else xyz_files
     selectable_files['rank'] = selectable_files['repo_path'].apply(rank_viewer_file)
-    
-    if not show_all_files:
-        selectable_files = selectable_files[selectable_files['rank'] > 0]
-        
     selectable_files = selectable_files.sort_values(['rank', 'repo_path'], ascending=[False, True])
 
     if not selectable_files.empty:
@@ -695,7 +1004,8 @@ with tabs[0]:
             val = st.query_params.get(param_name, "")
             if val:
                 for i, idx in enumerate(opts):
-                    if selectable_files.loc[idx, 'file_name'] == val:
+                    row = selectable_files.loc[idx]
+                    if row['repo_path'] == val or row['file_name'] == val:
                         return i
             return 0
 
@@ -703,10 +1013,11 @@ with tabs[0]:
             "Select file to view",
             selectable_files.index,
             index=get_viewer_file_idx(selectable_files.index),
-            format_func=lambda x: f"{selectable_files.loc[x, 'repo_path']} ({selectable_files.loc[x, 'state']})"
+            format_func=lambda x: format_file_option(selectable_files.loc[x]),
+            key="viewer_file_select",
         )
         selected_file = selectable_files.loc[selected_file_row]
-        update_param("file", selected_file['file_name'])
+        update_param("file", selected_file['repo_path'])
         path = selected_file['repo_path']
         resolved_path = resolve_repo_path(path)
 
@@ -714,7 +1025,7 @@ with tabs[0]:
             st.error("Invalid file path in manifest entry.")
             st.stop()
         
-        if path.endswith('.xyz'):
+        if path.lower().endswith('.xyz'):
             render_interaction_overview(selected_file)
             render_xyz(
                 path,
@@ -741,20 +1052,24 @@ with tabs[0]:
                     mime="text/plain",
                 )
     else:
-        st.info("No files found for current filters.")
+        if show_all_files:
+            st.info("No files found for current filters.")
+        else:
+            st.info("No .xyz files found for current filters. Enable text/data files to inspect other manifest entries.")
 
 with tabs[1]:
-    st.header("Wet vs Dry Comparison")
+    st.header("Structure Comparison")
 
     sync_cameras = st.checkbox("Sync Cameras", value=True)
     compare_mode_labels = {
+        "same_setup": "Same Setup (Across Frames)",
         "paired": "Paired (Wet vs Dry)",
         "custom": "Custom (Cross-Structure)",
     }
     compare_mode_keys = list(compare_mode_labels.keys())
-    compare_mode_default = st.query_params.get("compare_mode", "paired")
+    compare_mode_default = st.query_params.get("compare_mode", "same_setup")
     if compare_mode_default not in compare_mode_keys:
-        compare_mode_default = "paired"
+        compare_mode_default = "same_setup"
     compare_mode = st.selectbox(
         "Comparison Mode",
         compare_mode_keys,
@@ -783,11 +1098,19 @@ with tabs[1]:
         df_subset['rank'] = df_subset.apply(get_rank, axis=1)
         return df_subset.sort_values(['rank', 'repo_path'], ascending=[False, True])
 
+    def select_representative_files_by_frame(df_subset):
+        if df_subset.empty:
+            return df_subset
+        ranked = rank_files(df_subset[df_subset['repo_path'].str.lower().str.endswith('.xyz')])
+        if ranked.empty:
+            return ranked
+        return ranked.groupby("frame", group_keys=False).head(1).sort_values("frame")
+
     def get_file_idx(df_subset, param_name):
         val = st.query_params.get(param_name, "")
         if val:
             for i, row in enumerate(df_subset.itertuples()):
-                if row.file_name == val:
+                if row.repo_path == val or row.file_name == val:
                     return i
         return 0
 
@@ -838,6 +1161,7 @@ with tabs[1]:
         apply_comparison_style(view, right_data, (0, 1), is_trj=is_right_trj, start_frame=default_trj_frame)
 
         st.subheader(f"Left: {left_label} | Right: {right_label}")
+        render_comparison_energy_summary(left_file, right_file, left_label, right_label)
         html = view._make_html()
 
         if is_left_trj or is_right_trj:
@@ -862,7 +1186,75 @@ with tabs[1]:
             width=viewer_width,
         )
 
-    if compare_mode == "paired":
+    if compare_mode == "same_setup":
+        setup_source = frame_unfiltered_df[frame_unfiltered_df['repo_path'].str.lower().str.endswith('.xyz')].copy()
+        setup_groups = []
+        setup_grouped = setup_source.groupby(['surface', 'system', 'state', 'role'])
+        for name, group in setup_grouped:
+            frame_files = select_representative_files_by_frame(group)
+            if frame_files['frame'].nunique() >= 2:
+                setup_groups.append(name)
+
+        def get_setup_idx(opts, param_name="setup"):
+            val = st.query_params.get(param_name, "")
+            if val:
+                for i, opt in enumerate(opts):
+                    if f"{opt[0]}_{opt[1]}_{opt[2]}_{opt[3]}" == val:
+                        return i
+            return 0
+
+        if setup_groups:
+            selected_setup = st.selectbox(
+                "Select Setup to Compare",
+                setup_groups,
+                index=get_setup_idx(setup_groups),
+                format_func=lambda x: f"{x[1]} | {x[0]} | {format_state_option(x[2])} ({x[3]})",
+                key="same_setup_select",
+            )
+            update_param("setup", f"{selected_setup[0]}_{selected_setup[1]}_{selected_setup[2]}_{selected_setup[3]}")
+
+            setup_df = setup_grouped.get_group(selected_setup)
+            frame_files = select_representative_files_by_frame(setup_df).reset_index(drop=True)
+            st.subheader("Comparable Frame Energies")
+            render_same_setup_energy_comparison(frame_files)
+
+            left_idx = st.selectbox(
+                "Select Left Frame",
+                range(len(frame_files)),
+                index=get_file_idx(frame_files, "setup_left_file"),
+                format_func=lambda i: format_file_option(frame_files.iloc[i]),
+                key="setup_left_select",
+            )
+            default_right_idx = 1 if len(frame_files) > 1 else 0
+            right_idx = st.selectbox(
+                "Select Right Frame",
+                range(len(frame_files)),
+                index=get_file_idx(frame_files, "setup_right_file") if st.query_params.get("setup_right_file") else default_right_idx,
+                format_func=lambda i: format_file_option(frame_files.iloc[i]),
+                key="setup_right_select",
+            )
+
+            left_file = frame_files.iloc[left_idx]
+            right_file = frame_files.iloc[right_idx]
+            update_param("setup_left_file", left_file['repo_path'])
+            update_param("setup_right_file", right_file['repo_path'])
+
+            left_label = str(left_file['frame']) or left_file['file_name']
+            right_label = str(right_file['frame']) or right_file['file_name']
+            if sync_cameras:
+                render_comparison_pair(left_file, right_file, left_label, right_label)
+            else:
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.subheader(f"Left: {left_label}")
+                    render_xyz(left_file['repo_path'], height=400, fast_mode=performance_mode, start_frame=default_trj_frame)
+                with col2:
+                    st.subheader(f"Right: {right_label}")
+                    render_xyz(right_file['repo_path'], height=400, fast_mode=performance_mode, start_frame=default_trj_frame)
+        else:
+            st.info("No same-setup groups with two or more .xyz frames were found for current filters.")
+
+    elif compare_mode == "paired":
         comp_groups = []
         for name, group in groups:
             states = group['state'].unique()
@@ -903,7 +1295,7 @@ with tabs[1]:
                     key="sol_select",
                 )
                 solvated_file = solvated_files.iloc[sol_idx_pos]
-                update_param("sol_file", solvated_file['file_name'])
+                update_param("sol_file", solvated_file['repo_path'])
             else:
                 solvated_file = solvated_files.iloc[0]
                 update_param("sol_file", "All")
@@ -917,7 +1309,7 @@ with tabs[1]:
                     key="dry_select",
                 )
                 dry_file = dry_files.iloc[dry_idx_pos]
-                update_param("dry_file", dry_file['file_name'])
+                update_param("dry_file", dry_file['repo_path'])
             else:
                 dry_file = dry_files.iloc[0]
                 update_param("dry_file", "All")
@@ -946,21 +1338,21 @@ with tabs[1]:
                 "Select Left File",
                 range(len(custom_candidates)),
                 index=get_file_idx(custom_candidates, "left_file"),
-                format_func=lambda i: f"{custom_candidates.iloc[i]['repo_path']} ({custom_candidates.iloc[i]['state']})",
+                format_func=lambda i: format_file_option(custom_candidates.iloc[i]),
                 key="custom_left_select",
             )
             right_idx = st.selectbox(
                 "Select Right File",
                 range(len(custom_candidates)),
                 index=get_file_idx(custom_candidates, "right_file"),
-                format_func=lambda i: f"{custom_candidates.iloc[i]['repo_path']} ({custom_candidates.iloc[i]['state']})",
+                format_func=lambda i: format_file_option(custom_candidates.iloc[i]),
                 key="custom_right_select",
             )
 
             left_file = custom_candidates.iloc[left_idx]
             right_file = custom_candidates.iloc[right_idx]
-            update_param("left_file", left_file['file_name'])
-            update_param("right_file", right_file['file_name'])
+            update_param("left_file", left_file['repo_path'])
+            update_param("right_file", right_file['repo_path'])
 
             if sync_cameras:
                 render_comparison_pair(left_file, right_file, left_file['file_name'], right_file['file_name'])
@@ -983,31 +1375,36 @@ st.sidebar.info("RNA Silicate Interactions Streamlit App")
 
 # Reorder and cleanup URL query parameters
 current_params = st.query_params.to_dict()
-st.query_params.clear()
-
-# Enforce tab as the very first parameter
-if "tab" in current_params:
-    st.query_params["tab"] = current_params.pop("tab")
-
-active_tab = st.query_params.get("tab", "Visualization")
+next_params = current_params.copy()
+active_tab = next_params.get("tab", "Visualization")
 
 # Clean up tab-specific parameters so they don't persist incorrectly
 if active_tab == "Visualization":
-    for p in ["compare_mode", "compare", "sol_file", "dry_file", "left_file", "right_file"]:
-        current_params.pop(p, None)
+    for p in [
+        "compare_mode", "compare", "sol_file", "dry_file", "left_file", "right_file",
+        "setup", "setup_left_file", "setup_right_file",
+    ]:
+        next_params.pop(p, None)
 elif active_tab == "Comparison":
-    current_params.pop("file", None)
-    compare_mode_value = current_params.get("compare_mode", "paired")
+    next_params.pop("file", None)
+    compare_mode_value = next_params.get("compare_mode", "same_setup")
     if compare_mode_value == "paired":
-        for p in ["left_file", "right_file"]:
-            current_params.pop(p, None)
+        for p in ["left_file", "right_file", "setup", "setup_left_file", "setup_right_file"]:
+            next_params.pop(p, None)
+    elif compare_mode_value == "same_setup":
+        for p in ["compare", "sol_file", "dry_file", "left_file", "right_file"]:
+            next_params.pop(p, None)
     else:
-        for p in ["compare", "sol_file", "dry_file"]:
-            current_params.pop(p, None)
+        for p in ["compare", "sol_file", "dry_file", "setup", "setup_left_file", "setup_right_file"]:
+            next_params.pop(p, None)
 elif active_tab == "Data Table":
-    for p in ["compare_mode", "compare", "sol_file", "dry_file", "left_file", "right_file", "file"]:
-        current_params.pop(p, None)
+    for p in [
+        "compare_mode", "compare", "sol_file", "dry_file", "left_file", "right_file",
+        "setup", "setup_left_file", "setup_right_file", "file",
+    ]:
+        next_params.pop(p, None)
 
-# Add remaining parameters back in
-for k, v in current_params.items():
-    st.query_params[k] = v
+if next_params != current_params:
+    st.query_params.clear()
+    for k, v in next_params.items():
+        st.query_params[k] = v
