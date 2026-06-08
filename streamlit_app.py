@@ -456,6 +456,78 @@ def render_interaction_overview(selected_file):
         st.info("No matching ORCA .out file was found for this selected trajectory.")
 
 
+def render_comparison_energy_summary(left_file, right_file, left_label, right_label):
+    left_output = find_matching_output(left_file)
+    right_output = find_matching_output(right_file)
+    left_out_path = left_output['repo_path'] if left_output is not None else None
+    right_out_path = right_output['repo_path'] if right_output is not None else None
+
+    left_energy_df = get_output_energy_data(left_out_path)
+    right_energy_df = get_output_energy_data(right_out_path)
+    left_energy = summarize_energy(left_energy_df)
+    right_energy = summarize_energy(right_energy_df)
+
+    metrics = [
+        (f"{left_label} final energy (Hartree)", _format_energy_hartree(left_energy.get("final_energy_hartree"))),
+        (f"{left_label} final energy (kJ/mol)", _format_energy_kj_mol(left_energy.get("final_energy_kj_mol"))),
+        (f"{right_label} final energy (Hartree)", _format_energy_hartree(right_energy.get("final_energy_hartree"))),
+        (f"{right_label} final energy (kJ/mol)", _format_energy_kj_mol(right_energy.get("final_energy_kj_mol"))),
+    ]
+
+    if left_energy and right_energy:
+        delta_energy = right_energy["final_energy_kj_mol"] - left_energy["final_energy_kj_mol"]
+        metrics.append((f"Delta E ({right_label} - {left_label})", _format_signed_energy(delta_energy)))
+
+    render_metric_grid(metrics)
+    if left_energy or right_energy:
+        st.caption(
+            "Energies are the final `FINAL SINGLE POINT ENERGY` records from the matched ORCA outputs. "
+            "Compare absolute or delta energies only between calculations with the same composition, charge, and method."
+        )
+        render_comparison_energy_development(left_energy_df, right_energy_df, left_label, right_label)
+
+
+def render_comparison_energy_development(left_energy_df, right_energy_df, left_label, right_label):
+    traces = []
+    if not left_energy_df.empty and "relative_energy_kj_mol" in left_energy_df.columns:
+        left_trace = left_energy_df[["energy_record", "relative_energy_kj_mol"]].copy()
+        left_trace["structure"] = left_label
+        traces.append(left_trace)
+    if not right_energy_df.empty and "relative_energy_kj_mol" in right_energy_df.columns:
+        right_trace = right_energy_df[["energy_record", "relative_energy_kj_mol"]].copy()
+        right_trace["structure"] = right_label
+        traces.append(right_trace)
+
+    if not traces:
+        return
+
+    plot_df = pd.concat(traces, ignore_index=True)
+    st.caption(
+        "Energy development overlay: each curve is relative to its own lowest parsed "
+        "`FINAL SINGLE POINT ENERGY` record, so the optimization profiles can be compared on the same scale."
+    )
+    chart = alt.Chart(plot_df).mark_line(point=True).encode(
+        x=alt.X("energy_record:Q", title="ORCA energy record"),
+        y=alt.Y(
+            "relative_energy_kj_mol:Q",
+            title="Relative energy (kJ/mol)",
+            scale=alt.Scale(zero=True, nice=True),
+            axis=alt.Axis(tickCount=10, grid=True),
+        ),
+        color=alt.Color(
+            "structure:N",
+            title="Compared structure",
+            legend=alt.Legend(orient="bottom", labelLimit=0, titleLimit=0),
+        ),
+        tooltip=[
+            alt.Tooltip("structure:N", title="Structure"),
+            alt.Tooltip("energy_record:Q", title="ORCA energy record"),
+            alt.Tooltip("relative_energy_kj_mol:Q", title="Relative energy (kJ/mol)", format=".4f"),
+        ],
+    )
+    st.altair_chart(chart.properties(height=260), use_container_width=True)
+
+
 def _format_metric(value, unit=""):
     try:
         if pd.isna(value):
@@ -951,6 +1023,7 @@ with tabs[1]:
         apply_comparison_style(view, right_data, (0, 1), is_trj=is_right_trj, start_frame=default_trj_frame)
 
         st.subheader(f"Left: {left_label} | Right: {right_label}")
+        render_comparison_energy_summary(left_file, right_file, left_label, right_label)
         html = view._make_html()
 
         if is_left_trj or is_right_trj:
