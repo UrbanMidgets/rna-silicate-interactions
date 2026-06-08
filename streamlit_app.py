@@ -5,9 +5,17 @@ import os
 import base64
 import inspect
 from pathlib import Path
+import warnings
+
+import altair as alt
+import MDAnalysis as mda
+from MDAnalysis.analysis.distances import distance_array
+
+from parsers import ClassicalConformationParser, ClassicalTopologyConfig, QuantumTopologyParser, StateClassifier
 
 # Set page config
 st.set_page_config(page_title="RNA Silicate Interactions", layout="wide")
+warnings.filterwarnings("ignore", category=UserWarning)
 
 st.title("RNA Silicate Interactions")
 st.markdown("Supporting data for RNA nucleotide interactions with silicate surfaces.")
@@ -15,6 +23,7 @@ st.markdown("Supporting data for RNA nucleotide interactions with silicate surfa
 REPO_ROOT = Path(__file__).resolve().parent
 MANIFEST_PATH = REPO_ROOT / "data" / "MANIFEST.tsv"
 MAX_TEXT_PREVIEW_BYTES = 200_000
+PARSER_CACHE_VERSION = "si-op-phosphate-v3"
 
 
 def resolve_repo_path(path_value):
@@ -29,8 +38,12 @@ def resolve_repo_path(path_value):
     except Exception:
         return None
 
+def _path_mtime(path):
+    return path.stat().st_mtime if path.exists() else 0
+
+
 @st.cache_data
-def load_manifest():
+def load_manifest(manifest_mtime, classifications_mtime, parser_cache_version):
     if MANIFEST_PATH.exists():
         df = pd.read_csv(MANIFEST_PATH, sep="\t").fillna("")
         # Derive file_name and file_type
@@ -45,10 +58,28 @@ def load_manifest():
             return "other"
             
         df['file_type'] = df['repo_path'].apply(classify)
+        
+        # Load classifications if available
+        classifications_path = REPO_ROOT / "data" / "classifications.csv"
+        if classifications_path.exists():
+            class_df = pd.read_csv(classifications_path)
+            class_df = class_df.drop_duplicates(subset=['system', 'surface', 'frame', 'state'], keep='last')
+            # Merge classifications based on system, surface, frame, state
+            df = df.merge(
+                class_df[['system', 'surface', 'frame', 'state', 'State', 'Final_Bond_Order', 'Final_Intramol_Dist', 'Final_Anchoring_Dist']], 
+                on=['system', 'surface', 'frame', 'state'], 
+                how='left'
+            )
+            # Rename 'State' to 'classification' for clarity
+            df = df.rename(columns={'State': 'classification'})
+            # Fill NaNs for classifications
+            df['classification'] = df['classification'].fillna('Unclassified')
+            
         return df
     return pd.DataFrame()
 
-df = load_manifest()
+CLASSIFICATIONS_PATH = REPO_ROOT / "data" / "classifications.csv"
+df = load_manifest(_path_mtime(MANIFEST_PATH), _path_mtime(CLASSIFICATIONS_PATH), PARSER_CACHE_VERSION)
 
 if df.empty:
     st.error("Manifest not found. Please ensure data/MANIFEST.tsv exists.")
@@ -95,6 +126,13 @@ system = st.sidebar.selectbox("System", system_opts, index=get_param_idx(system_
 update_param("nuc", system)
 if system != "All":
     filtered_df = filtered_df[filtered_df['system'] == system]
+
+if 'classification' in filtered_df.columns:
+    class_opts = get_options(filtered_df, 'classification')
+    classification = st.sidebar.selectbox("Classification", class_opts, index=get_param_idx(class_opts, "class"))
+    update_param("class", classification)
+    if classification != "All":
+        filtered_df = filtered_df[filtered_df['classification'] == classification]
 
 role_opts = get_options(filtered_df, 'role')
 role = st.sidebar.selectbox("Role", role_opts, index=get_param_idx(role_opts, "role"))
@@ -185,6 +223,269 @@ def get_text_preview(path, max_bytes=MAX_TEXT_PREVIEW_BYTES):
         preview = f.read(max_bytes)
     was_truncated = file_size > max_bytes
     return preview, file_size, was_truncated
+
+
+def find_matching_output(row):
+    group = df[
+        (df['system'] == row['system'])
+        & (df['surface'] == row['surface'])
+        & (df['frame'] == row['frame'])
+        & (df['state'] == row['state'])
+        & (df['repo_path'].str.endswith('.out'))
+    ].copy()
+    if group.empty:
+        return None
+
+    selected_stem = Path(row['file_name']).stem.replace("_trj", "")
+    group['stem_score'] = group['file_name'].apply(
+        lambda name: 2 if Path(name).stem in selected_stem or selected_stem in Path(name).stem else 0
+    )
+    if 'status' in group.columns:
+        group['status_score'] = group['status'].apply(lambda status: 1 if status == 'normal' else 0)
+    else:
+        group['status_score'] = 0
+    group = group.sort_values(['stem_score', 'status_score', 'repo_path'], ascending=[False, False, True])
+    return group.iloc[0]
+
+
+@st.cache_data(show_spinner=False)
+def parse_current_interactions(xyz_path, out_path=None, parser_cache_version=PARSER_CACHE_VERSION):
+    xyz_resolved = resolve_repo_path(xyz_path)
+    if xyz_resolved is None or not xyz_resolved.exists():
+        return pd.DataFrame(), pd.DataFrame(), {"State": "Unknown (Missing XYZ)", "Reason": "Selected XYZ file was not found"}
+
+    u = mda.Universe(str(xyz_resolved))
+    p_atoms = u.select_atoms("name P")
+    if len(p_atoms) == 0:
+        return pd.DataFrame(), pd.DataFrame(), {"State": "Unknown (No Phosphorus)", "Reason": "No phosphorus atom was found in the selected XYZ"}
+
+    p_idx = int(p_atoms.indices[0])
+    oxygen_indices = [int(atom.index) for atom in u.atoms if atom.name == "O" and atom.index > p_idx]
+    p_distances = distance_array(u.atoms[p_idx].position[None, :], u.atoms[oxygen_indices].positions)[0]
+    phosphate_oxygen_indices = [
+        oxygen_indices[i]
+        for i, distance in enumerate(p_distances)
+        if distance <= 1.9
+    ]
+    topology_config = ClassicalTopologyConfig(p_index=p_idx, surface_index_stop=p_idx)
+    c_df = ClassicalConformationParser(topology_config).parse_trajectory(xyz_resolved)
+
+    q_df = pd.DataFrame()
+    if out_path:
+        out_resolved = resolve_repo_path(out_path)
+        if out_resolved is not None and out_resolved.exists():
+            si_indices = [int(atom.index) for atom in u.atoms if atom.name == "Si" and atom.index < p_idx]
+            q_df = QuantumTopologyParser(
+                p_idx=p_idx,
+                target_indices=phosphate_oxygen_indices,
+                target_element="O",
+                partner_indices=si_indices,
+                partner_element="Si",
+            ).parse_file(out_resolved)
+
+    result = StateClassifier().classify_pair(q_df, c_df, label=Path(xyz_path).stem)
+    return q_df, c_df, result
+
+
+def render_interaction_overview(selected_file):
+    if not selected_file['repo_path'].lower().endswith('.xyz'):
+        return
+
+    matching_output = find_matching_output(selected_file)
+    out_path = matching_output['repo_path'] if matching_output is not None else None
+    q_df, c_df, result = parse_current_interactions(selected_file['repo_path'], out_path, PARSER_CACHE_VERSION)
+
+    st.subheader("Trajectory Interaction Overview")
+    st.caption(
+        f"{selected_file['system']} | {selected_file['surface']} | {selected_file['frame']} | "
+        f"{selected_file['state']} | ORCA: {Path(out_path).name if out_path else 'not found'}"
+    )
+
+    render_metric_grid(
+        [
+            ("Final State", result.get("State", "Unknown")),
+            ("Si-O(P) Mayer BO", f"{result.get('Final_Bond_Order', 0.0):.3f}"),
+            ("Ribose-PO min dist", _format_metric(result.get("Final_Intramol_Dist"), "A")),
+            ("P-O to surface O", _format_metric(result.get("Final_PhosphateO_SurfaceO_Dist"), "A")),
+            ("P-O to surface Si", _format_metric(result.get("Final_PhosphateO_SurfaceSi_Dist"), "A")),
+            ("PO-siloxane COM", _format_metric(result.get("Final_PO_Siloxane_COM_Dist"), "A")),
+        ]
+    )
+
+    reason = result.get("Reason")
+    if reason:
+        st.caption(reason)
+
+    if not c_df.empty:
+        classical_cols = [
+            "min_dist_intramol_OH_PO",
+            "min_dist_nh2_surfO",
+            "min_dist_riboseOH_surfSilanol",
+            "min_dist_phosphateO_surfaceO",
+            "min_dist_phosphateO_surfaceSi",
+            "dist_PO_siloxane_COM",
+        ]
+        available_cols = [col for col in classical_cols if col in c_df.columns]
+        if available_cols:
+            plot_df = c_df.set_index("Frame")[available_cols].rename(
+                columns={
+                    "min_dist_intramol_OH_PO": "Ribose hydroxyl oxygen to phosphate oxygen distance",
+                    "min_dist_nh2_surfO": "Nucleobase nitrogen to surface oxygen distance",
+                    "min_dist_riboseOH_surfSilanol": "Ribose hydroxyl oxygen to surface oxygen distance",
+                    "min_dist_phosphateO_surfaceO": "Phosphate oxygen to surface oxygen distance",
+                    "min_dist_phosphateO_surfaceSi": "Phosphate oxygen to surface silicon distance",
+                    "dist_PO_siloxane_COM": "Phosphate oxygen to siloxane center-of-mass distance",
+                }
+            )
+            render_interaction_line_chart(
+                plot_df,
+                x_title="Trajectory frame",
+                y_title="Distance (A)",
+                legend_title="Geometric interaction",
+                height=320,
+                y_zero=False,
+                y_tick_count=10,
+            )
+
+    if not q_df.empty:
+        bond_cols = [col for col in ["Step", "Target_Idx", "Si_Idx", "Bond_Order", "Target_Pair_Found"] if col in q_df.columns]
+        q_plot = q_df.set_index("Step")[["Bond_Order"]].rename(columns={"Bond_Order": "Silicon to phosphate oxygen Mayer bond order"})
+        st.caption(
+            "The Mayer bond-order plot comes from ORCA bond-order sections, not XYZ trajectory frames. "
+            "Most files contain only two sections: the first electronic-structure evaluation and the final optimized structure."
+        )
+        render_interaction_line_chart(
+            q_plot,
+            x_title="ORCA Mayer bond-order section",
+            y_title="Mayer bond order",
+            legend_title="Quantum topology metric",
+            height=240,
+            points=True,
+            y_zero=True,
+            y_tick_count=8,
+        )
+        with st.expander("Mayer bond-order sections"):
+            st.dataframe(q_df[bond_cols], use_container_width=True)
+    elif out_path is None:
+        st.info("No matching ORCA .out file was found for this selected trajectory.")
+
+
+def _format_metric(value, unit=""):
+    try:
+        if pd.isna(value):
+            return "n/a"
+        suffix = f" {unit}" if unit else ""
+        return f"{float(value):.2f}{suffix}"
+    except (TypeError, ValueError):
+        return "n/a"
+
+
+def render_interaction_line_chart(
+    plot_df,
+    x_title,
+    y_title,
+    legend_title,
+    height=280,
+    points=False,
+    y_zero=False,
+    y_tick_count=10,
+):
+    if plot_df.empty:
+        return
+
+    index_name = plot_df.index.name or "index"
+    chart_df = (
+        plot_df.reset_index()
+        .rename(columns={index_name: "x"})
+        .melt(id_vars="x", var_name="interaction", value_name="value")
+        .dropna(subset=["value"])
+    )
+    if chart_df.empty:
+        return
+
+    line = alt.Chart(chart_df).mark_line(point=points).encode(
+        x=alt.X("x:Q", title=x_title),
+        y=alt.Y(
+            "value:Q",
+            title=y_title,
+            scale=alt.Scale(zero=y_zero, nice=True),
+            axis=alt.Axis(tickCount=y_tick_count, grid=True),
+        ),
+        color=alt.Color(
+            "interaction:N",
+            title=legend_title,
+            legend=alt.Legend(
+                orient="bottom",
+                columns=2,
+                labelLimit=0,
+                symbolLimit=0,
+                titleLimit=0,
+            ),
+        ),
+        tooltip=[
+            alt.Tooltip("x:Q", title=x_title),
+            alt.Tooltip("interaction:N", title=legend_title),
+            alt.Tooltip("value:Q", title=y_title, format=".4f"),
+        ],
+    )
+    st.altair_chart(line.properties(height=height), use_container_width=True)
+
+
+def render_metric_grid(metrics):
+    items = "\n".join(
+        f"""
+        <div class="metric-item">
+            <div class="metric-label">{_html_escape(str(label))}</div>
+            <div class="metric-value">{_html_escape(str(value))}</div>
+        </div>
+        """
+        for label, value in metrics
+    )
+    st.markdown(
+        f"""
+        <style>
+            .metric-grid {{
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+                gap: 1rem 1.5rem;
+                margin: 1rem 0 0.75rem 0;
+            }}
+            .metric-item {{
+                min-width: 0;
+            }}
+            .metric-label {{
+                color: rgba(250, 250, 250, 0.72);
+                font-size: 0.92rem;
+                font-weight: 650;
+                line-height: 1.25;
+                overflow-wrap: anywhere;
+            }}
+            .metric-value {{
+                color: rgb(250, 250, 250);
+                font-size: clamp(1.55rem, 2.2vw, 2.35rem);
+                font-weight: 500;
+                line-height: 1.18;
+                margin-top: 0.3rem;
+                overflow-wrap: anywhere;
+                white-space: normal;
+            }}
+        </style>
+        <div class="metric-grid">
+            {items}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _html_escape(value):
+    return (
+        value.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+        .replace("'", "&#x27;")
+    )
 
 def inject_visibility_fix(html):
     """
@@ -414,6 +715,7 @@ with tabs[0]:
             st.stop()
         
         if path.endswith('.xyz'):
+            render_interaction_overview(selected_file)
             render_xyz(
                 path,
                 f"Visualizing: {selected_file['file_name']}",
