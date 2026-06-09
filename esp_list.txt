@@ -1,0 +1,8 @@
+canonical surface: "/data/Seafile/amp/docking/flower_ring.xyz"
+amp_protonated: "/data/Seafile/amp/protonated/geom/amp_prot.xyz"
+amp: "/data/Seafile/amp/docking/amp.xyz"
+cmp: "/data/Seafile/cmp/docking/cmp.xyz"
+cmp_protonated: "/data/Seafile/cmp/protonated/geom/cmp_prot.xyz"
+gmp: "/data/Seafile/gmp/docking/gmp.xyz"
+ump: "/data/Seafile/ump/geom/ump.xyz"
+aluminium surface: "/data/Seafile/al_surf/flower_ring_al.xyz"
