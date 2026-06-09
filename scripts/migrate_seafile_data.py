@@ -36,6 +36,16 @@ CHECK_SUFFIXES = CALC_SUFFIXES + (
     ".svg",
 )
 
+DRY_CHECKS_TO_INCLUDE = {
+    ("amp", "canonical", "frame12", "dry_md"),
+    ("ump", "canonical", "frame15", "1000deg"),
+}
+
+DRY_CHECK_TRAJECTORY_NAMES = {
+    ("amp", "canonical", "frame12", "dry_md"): "amp_frame12_dry_md_fixed_trj.xyz",
+    ("ump", "canonical", "frame15", "1000deg"): "ump_frame15_dry2wet_1000deg_trj.xyz",
+}
+
 DOCKING_KEEP_NAMES = {
     "docking.inp",
     "docking.out",
@@ -113,7 +123,7 @@ def copy_flat_calc_dir(src_dir: Path, dst_dir: Path, *, role: str, system: str, 
             copy_file(src, dst_dir / src.name, role=role, system=system, surface=surface, frame=frame, state=state, notes=notes)
 
 
-def copy_recursive_filtered(src_dir: Path, dst_dir: Path, *, role: str, system: str, surface: str, frame: str, state: str, suffixes: tuple[str, ...], notes: str = "") -> None:
+def copy_recursive_filtered(src_dir: Path, dst_dir: Path, *, role: str, system: str, surface: str, frame: str, state: str, suffixes: tuple[str, ...], notes: str = "", name_overrides: dict[str, str] | None = None) -> None:
     if not src_dir.is_dir():
         return
     for root, dirs, files in os.walk(src_dir):
@@ -123,7 +133,8 @@ def copy_recursive_filtered(src_dir: Path, dst_dir: Path, *, role: str, system: 
         for name in sorted(files):
             src = root_path / name
             if should_copy_calc_file(src, suffixes):
-                copy_file(src, dst_dir / rel / name, role=role, system=system, surface=surface, frame=frame, state=state, notes=notes)
+                dst_name = name_overrides.get(name, name) if name_overrides else name
+                copy_file(src, dst_dir / rel / dst_name, role=role, system=system, surface=surface, frame=frame, state=state, notes=notes)
 
 
 def has_outputs(frame_dir: Path) -> bool:
@@ -148,6 +159,15 @@ def copy_frame_set(src_frames: Path, dst_system: Path, *, system: str, surface: 
 
         copy_flat_calc_dir(frame_dir, selected_root / frame / "solvated", role=role, system=system, surface=surface, frame=frame, state="solvated")
         copy_flat_calc_dir(frame_dir / "dry", selected_root / frame / "dry", role=role, system=system, surface=surface, frame=frame, state="dry")
+
+        dry_dir = frame_dir / "dry"
+        if dry_dir.is_dir():
+            for extra in sorted(p for p in dry_dir.iterdir() if p.is_dir()):
+                dry_check = (system, surface, frame, extra.name)
+                if dry_check not in DRY_CHECKS_TO_INCLUDE:
+                    continue
+                name_overrides = {"trajectory.xyz": DRY_CHECK_TRAJECTORY_NAMES[dry_check]}
+                copy_recursive_filtered(extra, checks_root / frame / "dry" / extra.name, role="check", system=system, surface=surface, frame=frame, state=f"dry/{extra.name}", suffixes=CHECK_SUFFIXES, notes="non-primary dry check or exploratory calculation", name_overrides=name_overrides)
 
         for extra in sorted(p for p in frame_dir.iterdir() if p.is_dir() and p.name != "dry"):
             copy_recursive_filtered(extra, checks_root / frame / extra.name, role="check", system=system, surface=surface, frame=frame, state=extra.name, suffixes=CHECK_SUFFIXES, notes="non-primary check or exploratory calculation")
