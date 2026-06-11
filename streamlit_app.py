@@ -827,7 +827,7 @@ def render_relative_energy_comparison_table(source_df):
     st.header("Relative Energy Table")
     st.caption(
         "Final ORCA energies are converted to relative energies only within matching setup groups: "
-        "same nucleotide, surface, solvent state, role, and atom composition. Dry and solvated calculations are never mixed."
+        "same nucleotide, surface, solvent state, role, and atom composition. Dry and solvated calculations are never mixed. Directly comparable rows are colourcoordinated in groups, but use the relative energy values and atom signatures to check comparability between groups."
     )
 
     energy_table = build_relative_energy_comparison_rows(source_df)
