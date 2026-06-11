@@ -1360,6 +1360,17 @@ if active_tab == "Comparison":
                     return i
         return 0
 
+    def get_option_idx(df_subset, options, param_name, default_option=None):
+        val = st.query_params.get(param_name, "")
+        if val:
+            for option_idx, row_idx in enumerate(options):
+                row = df_subset.iloc[row_idx]
+                if row['repo_path'] == val or row['file_name'] == val:
+                    return option_idx
+        if default_option in options:
+            return options.index(default_option)
+        return 0
+
     def render_comparison_pair(left_file, right_file, left_label, right_label):
         left_data = get_xyz_data(left_file['repo_path'])
         right_data = get_xyz_data(right_file['repo_path'])
@@ -1471,11 +1482,20 @@ if active_tab == "Comparison":
                 format_func=lambda i: format_file_option(frame_files.iloc[i]),
                 key="setup_left_select",
             )
-            default_right_idx = 1 if len(frame_files) > 1 else 0
+            right_options = [i for i in range(len(frame_files)) if i != left_idx]
+            if not right_options:
+                st.info("At least two distinct frames are needed for comparison.")
+                st.stop()
+            default_right_idx = right_options[0]
             right_idx = st.selectbox(
                 "Select Right Frame",
-                range(len(frame_files)),
-                index=get_file_idx(frame_files, "setup_right_file") if st.query_params.get("setup_right_file") else default_right_idx,
+                right_options,
+                index=get_option_idx(
+                    frame_files,
+                    right_options,
+                    "setup_right_file",
+                    default_option=default_right_idx,
+                ),
                 format_func=lambda i: format_file_option(frame_files.iloc[i]),
                 key="setup_right_select",
             )
@@ -1579,6 +1599,8 @@ if active_tab == "Comparison":
 
         if custom_candidates.empty:
             st.info("No .xyz files available for custom comparison with current filters.")
+        elif len(custom_candidates) < 2:
+            st.info("At least two distinct .xyz files are needed for custom comparison with current filters.")
         else:
             left_idx = st.selectbox(
                 "Select Left File",
@@ -1587,10 +1609,11 @@ if active_tab == "Comparison":
                 format_func=lambda i: format_file_option(custom_candidates.iloc[i]),
                 key="custom_left_select",
             )
+            right_options = [i for i in range(len(custom_candidates)) if i != left_idx]
             right_idx = st.selectbox(
                 "Select Right File",
-                range(len(custom_candidates)),
-                index=get_file_idx(custom_candidates, "right_file"),
+                right_options,
+                index=get_option_idx(custom_candidates, right_options, "right_file"),
                 format_func=lambda i: format_file_option(custom_candidates.iloc[i]),
                 key="custom_right_select",
             )
