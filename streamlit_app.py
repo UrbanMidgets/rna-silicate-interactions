@@ -3,7 +3,6 @@ import pandas as pd
 import py3Dmol
 import os
 import base64
-import inspect
 from pathlib import Path
 import warnings
 import math
@@ -124,6 +123,41 @@ def get_param_idx(opts, param_name, default="All", prefix=""):
         return opts.index(f"{prefix}{val}")
     return opts.index(default) if default in opts else 0
 
+
+def get_bool_param(param_name, default=False):
+    value = st.query_params.get(param_name)
+    if value is None:
+        return default
+    return str(value).lower() in {"1", "true", "yes", "on"}
+
+
+def update_bool_param(param_name, value, default=False):
+    if bool(value) == bool(default):
+        if param_name in st.query_params:
+            del st.query_params[param_name]
+    else:
+        st.query_params[param_name] = "1" if value else "0"
+
+
+def get_int_param(param_name, default, minimum=None, maximum=None):
+    try:
+        value = int(st.query_params.get(param_name, default))
+    except (TypeError, ValueError):
+        value = default
+    if minimum is not None:
+        value = max(minimum, value)
+    if maximum is not None:
+        value = min(maximum, value)
+    return value
+
+
+def update_int_param(param_name, value, default):
+    if int(value) == int(default):
+        if param_name in st.query_params:
+            del st.query_params[param_name]
+    else:
+        st.query_params[param_name] = str(int(value))
+
 def update_param(param_name, value):
     if value == "All":
         if param_name in st.query_params:
@@ -186,16 +220,25 @@ if frame != "All":
     filtered_df = filtered_df[filtered_df['frame'] == frame]
 
 st.sidebar.header("Settings")
-show_surface = st.sidebar.checkbox("Show Surface (Si, Al, O)", value=True)
-spin = st.sidebar.checkbox("Spin Molecule", value=False)
-performance_mode = st.sidebar.checkbox("Performance Mode", value=True)
+show_surface = st.sidebar.checkbox("Show Surface (Si, Al, O)", value=get_bool_param("show_surface", True))
+update_bool_param("show_surface", show_surface, True)
+spin = st.sidebar.checkbox("Spin Molecule", value=get_bool_param("spin", False))
+update_bool_param("spin", spin, False)
+performance_mode = st.sidebar.checkbox("Performance Mode", value=get_bool_param("performance", True))
+update_bool_param("performance", performance_mode, True)
 
 try:
     default_trj_frame = int(st.query_params.get("trj_frame", 0))
 except ValueError:
     default_trj_frame = 0
 
-trajectory_stride = st.sidebar.slider("Trajectory Frame Step", 1, 10, 1)
+trajectory_stride = st.sidebar.slider(
+    "Trajectory Frame Step",
+    1,
+    10,
+    get_int_param("trj_stride", 1, minimum=1, maximum=10),
+)
+update_int_param("trj_stride", trajectory_stride, 1)
 
 st.sidebar.markdown(f"**Matches:** {len(filtered_df)}")
 
@@ -204,24 +247,23 @@ st.sidebar.markdown(f"**Matches:** {len(filtered_df)}")
 comparison_options = filtered_df[filtered_df['state'].isin(['solvated', 'dry'])]
 groups = comparison_options.groupby(['surface', 'system', 'frame', 'role'])
 
-def update_tab():
-    st.query_params["tab"] = st.session_state.active_tab
-
-tab_options = ["Visualization", "Comparison", "Data Table"]
+tab_options = ["Visualization", "Comparison", "Relative Energies", "Data Table"]
 default_tab = st.query_params.get("tab", "Visualization")
 if default_tab not in tab_options:
     default_tab = "Visualization"
 
-# Main content area
-tabs_kwargs = {}
-tabs_params = inspect.signature(st.tabs).parameters
-if "default" in tabs_params:
-    tabs_kwargs["default"] = default_tab
-if "key" in tabs_params:
-    tabs_kwargs["key"] = "active_tab"
-if "on_change" in tabs_params:
-    tabs_kwargs["on_change"] = update_tab
-tabs = st.tabs(tab_options, **tabs_kwargs)
+active_tab = st.segmented_control(
+    "Section",
+    tab_options,
+    default=default_tab,
+    key="active_tab",
+    label_visibility="collapsed",
+    width="stretch",
+)
+if active_tab is None:
+    active_tab = default_tab
+if st.query_params.get("tab") != active_tab:
+    st.query_params["tab"] = active_tab
 
 @st.cache_data
 def get_frame_count(xyz_path):
@@ -253,6 +295,60 @@ def get_xyz_atom_count(xyz_path):
         return int(first_line)
     except (OSError, ValueError):
         return None
+
+
+@st.cache_data
+def get_xyz_atom_signature(xyz_path):
+    resolved_path = resolve_repo_path(xyz_path)
+    if resolved_path is None or not resolved_path.exists():
+        return None
+    try:
+        with resolved_path.open("r") as f:
+            first_line = f.readline().strip()
+            atom_count = int(first_line)
+            f.readline()
+            element_counts = {}
+            for _ in range(atom_count):
+                parts = f.readline().split()
+                if not parts:
+                    continue
+                element = parts[0]
+                element_counts[element] = element_counts.get(element, 0) + 1
+        if not element_counts:
+            return None
+        return "; ".join(f"{element}{element_counts[element]}" for element in sorted(element_counts))
+    except (OSError, ValueError):
+        return None
+
+
+def rank_xyz_files(df_subset, state_label=""):
+    if df_subset.empty:
+        return df_subset
+
+    def get_rank(row):
+        score = 0
+        path_lower = row['repo_path'].lower()
+        file_lower = row['file_name'].lower()
+        if path_lower.endswith('_trj.xyz'):
+            score += 10
+        if state_label and state_label.lower() in file_lower:
+            score += 5
+        if state_label and f"/{state_label.lower()}/" in path_lower:
+            score += 2
+        return score
+
+    df_subset = df_subset.copy()
+    df_subset['rank'] = df_subset.apply(get_rank, axis=1)
+    return df_subset.sort_values(['rank', 'repo_path'], ascending=[False, True])
+
+
+def select_representative_files_by_frame(df_subset):
+    if df_subset.empty:
+        return df_subset
+    ranked = rank_xyz_files(df_subset[df_subset['repo_path'].str.lower().str.endswith('.xyz')])
+    if ranked.empty:
+        return ranked
+    return ranked.groupby("frame", group_keys=False).head(1).sort_values("frame")
 
 @st.cache_data
 def get_xyz_data(path):
@@ -652,6 +748,153 @@ def render_same_setup_energy_comparison(frame_files):
     st.dataframe(display_table, use_container_width=True)
 
 
+def build_relative_energy_comparison_rows(source_df):
+    xyz_source = source_df[
+        source_df['state'].isin(['solvated', 'dry'])
+        & source_df['repo_path'].str.lower().str.endswith('.xyz')
+    ].copy()
+    if xyz_source.empty:
+        return pd.DataFrame()
+
+    representatives = []
+    for _, setup_df in xyz_source.groupby(['surface', 'system', 'state', 'role']):
+        representatives.append(select_representative_files_by_frame(setup_df))
+    if not representatives:
+        return pd.DataFrame()
+
+    representative_df = pd.concat(representatives, ignore_index=True)
+    rows = []
+    for _, file_row in representative_df.iterrows():
+        atom_count = get_xyz_atom_count(file_row['repo_path'])
+        atom_signature = get_xyz_atom_signature(file_row['repo_path'])
+        output_row = find_matching_output(file_row)
+        out_path = output_row['repo_path'] if output_row is not None else None
+        energy = summarize_energy(get_output_energy_data(out_path))
+        classification = file_row.get('classification', 'Unclassified')
+        bond_order = file_row.get('Final_Bond_Order')
+        try:
+            bond_formed = pd.notna(bond_order) and float(bond_order) >= 0.5
+        except (TypeError, ValueError):
+            bond_formed = False
+
+        rows.append(
+            {
+                "nucleotide": file_row['system'],
+                "surface": file_row['surface'],
+                "solvent_state": file_row['state'],
+                "role": file_row['role'],
+                "atom_count": atom_count,
+                "atom_signature": atom_signature,
+                "frame": file_row['frame'],
+                "file": file_row['file_name'],
+                "orca_output": Path(out_path).name if out_path else "not found",
+                "classification": classification,
+                "bond_formed": "Yes" if bond_formed else "No",
+                "sterically_locked": "Yes" if classification == "Sterically Locked" else "No",
+                "final_bond_order": bond_order,
+                "intramolecular_lock_distance_A": file_row.get('Final_Intramol_Dist'),
+                "anchoring_distance_A": file_row.get('Final_Anchoring_Dist'),
+                "final_energy_hartree": energy.get("final_energy_hartree"),
+                "final_energy_kj_mol": energy.get("final_energy_kj_mol"),
+                "energy_record_count": energy.get("energy_record_count"),
+            }
+        )
+
+    table = pd.DataFrame(rows)
+    if table.empty:
+        return table
+
+    comparable_cols = ['surface', 'nucleotide', 'solvent_state', 'role', 'atom_signature']
+    table['comparison_group_size'] = table.groupby(comparable_cols)['file'].transform('count')
+    table['valid_energy_count'] = table.groupby(comparable_cols)['final_energy_kj_mol'].transform(
+        lambda values: values.notna().sum()
+    )
+    table['relative_energy_kj_mol'] = pd.NA
+
+    for _, idx in table.dropna(subset=['final_energy_kj_mol']).groupby(comparable_cols).groups.items():
+        group_energies = table.loc[idx, 'final_energy_kj_mol']
+        table.loc[idx, 'relative_energy_kj_mol'] = group_energies - group_energies.min()
+
+    return table.sort_values(
+        ['nucleotide', 'solvent_state', 'surface', 'role', 'atom_count', 'relative_energy_kj_mol', 'frame', 'file'],
+        na_position='last',
+    )
+
+
+def render_relative_energy_comparison_table(source_df):
+    st.header("Relative Energy Table")
+    st.caption(
+        "Final ORCA energies are converted to relative energies only within matching setup groups: "
+        "same nucleotide, surface, solvent state, role, and atom composition. Dry and solvated calculations are never mixed."
+    )
+
+    energy_table = build_relative_energy_comparison_rows(source_df)
+    if energy_table.empty:
+        st.info("No solvated or dry .xyz representatives were found for the current filters.")
+        return
+
+    show_singletons = st.checkbox(
+        "Show groups with only one comparable structure",
+        value=get_bool_param("show_singletons", False),
+    )
+    update_bool_param("show_singletons", show_singletons, False)
+    display_source = energy_table if show_singletons else energy_table[energy_table['valid_energy_count'] >= 2]
+    if display_source.empty:
+        st.info("No comparable groups with two or more matched final energies were found for the current filters.")
+        st.dataframe(energy_table, use_container_width=True)
+        return
+
+    group_count = display_source[
+        ['surface', 'nucleotide', 'solvent_state', 'role', 'atom_signature']
+    ].drop_duplicates().shape[0]
+    st.caption(f"Showing {len(display_source)} structures across {group_count} comparable setup groups.")
+
+    for nucleotide in sorted(display_source['nucleotide'].dropna().unique()):
+        nucleotide_df = display_source[display_source['nucleotide'] == nucleotide].copy()
+        st.subheader(str(nucleotide).upper())
+        formatted = nucleotide_df[
+            [
+                'solvent_state',
+                'surface',
+                'role',
+                'frame',
+                'file',
+                'relative_energy_kj_mol',
+                'final_energy_hartree',
+                'classification',
+                'bond_formed',
+                'sterically_locked',
+                'final_bond_order',
+                'intramolecular_lock_distance_A',
+                'anchoring_distance_A',
+                'atom_count',
+                'orca_output',
+                'energy_record_count',
+                'atom_signature',
+            ]
+        ].rename(
+            columns={
+                'solvent_state': 'solvent state',
+                'relative_energy_kj_mol': 'relative energy (kJ/mol)',
+                'final_energy_hartree': 'final energy (Eh)',
+                'bond_formed': 'bond formed',
+                'sterically_locked': 'sterically locked',
+                'final_bond_order': 'final bond order',
+                'intramolecular_lock_distance_A': 'intramol lock dist (A)',
+                'anchoring_distance_A': 'anchoring dist (A)',
+                'atom_count': 'atom count',
+                'orca_output': 'ORCA output',
+                'energy_record_count': 'energy records',
+                'atom_signature': 'atom composition',
+            }
+        )
+        formatted['relative energy (kJ/mol)'] = formatted['relative energy (kJ/mol)'].map(_format_signed_energy)
+        formatted['final energy (Eh)'] = formatted['final energy (Eh)'].map(_format_energy_hartree)
+        for col in ['final bond order', 'intramol lock dist (A)', 'anchoring dist (A)']:
+            formatted[col] = formatted[col].map(lambda value: _format_metric(value))
+        st.dataframe(formatted, use_container_width=True, hide_index=True)
+
+
 def _format_metric(value, unit=""):
     try:
         if pd.isna(value):
@@ -979,14 +1222,15 @@ def render_xyz(xyz_path, title=None, height=600, width=1000, fast_mode=False, st
     encoded_html = base64.b64encode(html.encode("utf-8")).decode("ascii")
     st.components.v1.iframe(f"data:text/html;base64,{encoded_html}", height=height, width=width)
 
-with tabs[0]:
+if active_tab == "Visualization":
     st.header("File Viewer")
 
     show_all_files = st.checkbox(
         "Include text/data files",
-        value=False,
+        value=get_bool_param("show_all", False),
         help="By default, the native file selector only shows .xyz structure and trajectory files.",
     )
+    update_bool_param("show_all", show_all_files, False)
     
     def rank_viewer_file(path):
         p = str(path).lower()
@@ -1057,10 +1301,11 @@ with tabs[0]:
         else:
             st.info("No .xyz files found for current filters. Enable text/data files to inspect other manifest entries.")
 
-with tabs[1]:
+if active_tab == "Comparison":
     st.header("Structure Comparison")
 
-    sync_cameras = st.checkbox("Sync Cameras", value=True)
+    sync_cameras = st.checkbox("Sync Cameras", value=get_bool_param("sync_cameras", True))
+    update_bool_param("sync_cameras", sync_cameras, True)
     compare_mode_labels = {
         "same_setup": "Same Setup (Across Frames)",
         "paired": "Paired (Wet vs Dry)",
@@ -1078,33 +1323,7 @@ with tabs[1]:
     )
     update_param("compare_mode", compare_mode)
 
-    def rank_files(df_subset, state_label=""):
-        if df_subset.empty:
-            return df_subset
-
-        def get_rank(row):
-            score = 0
-            path_lower = row['repo_path'].lower()
-            file_lower = row['file_name'].lower()
-            if path_lower.endswith('_trj.xyz'):
-                score += 10
-            if state_label and state_label.lower() in file_lower:
-                score += 5
-            if state_label and f"/{state_label.lower()}/" in path_lower:
-                score += 2
-            return score
-
-        df_subset = df_subset.copy()
-        df_subset['rank'] = df_subset.apply(get_rank, axis=1)
-        return df_subset.sort_values(['rank', 'repo_path'], ascending=[False, True])
-
-    def select_representative_files_by_frame(df_subset):
-        if df_subset.empty:
-            return df_subset
-        ranked = rank_files(df_subset[df_subset['repo_path'].str.lower().str.endswith('.xyz')])
-        if ranked.empty:
-            return ranked
-        return ranked.groupby("frame", group_keys=False).head(1).sort_values("frame")
+    rank_files = rank_xyz_files
 
     def get_file_idx(df_subset, param_name):
         val = st.query_params.get(param_name, "")
@@ -1365,7 +1584,10 @@ with tabs[1]:
                     st.subheader(f"Right: {right_file['file_name']}")
                     render_xyz(right_file['repo_path'], height=400, fast_mode=performance_mode, start_frame=default_trj_frame)
 
-with tabs[2]:
+if active_tab == "Relative Energies":
+    render_relative_energy_comparison_table(frame_unfiltered_df)
+
+if active_tab == "Data Table":
     st.header("Filtered Data")
     safe_df = filtered_df.drop(columns=["source_path"], errors="ignore")
     st.dataframe(safe_df)
@@ -1382,11 +1604,13 @@ active_tab = next_params.get("tab", "Visualization")
 if active_tab == "Visualization":
     for p in [
         "compare_mode", "compare", "sol_file", "dry_file", "left_file", "right_file",
-        "setup", "setup_left_file", "setup_right_file",
+        "setup", "setup_left_file", "setup_right_file", "sync_cameras", "show_singletons",
     ]:
         next_params.pop(p, None)
 elif active_tab == "Comparison":
     next_params.pop("file", None)
+    next_params.pop("show_all", None)
+    next_params.pop("show_singletons", None)
     compare_mode_value = next_params.get("compare_mode", "same_setup")
     if compare_mode_value == "paired":
         for p in ["left_file", "right_file", "setup", "setup_left_file", "setup_right_file"]:
@@ -1397,10 +1621,16 @@ elif active_tab == "Comparison":
     else:
         for p in ["compare", "sol_file", "dry_file", "setup", "setup_left_file", "setup_right_file"]:
             next_params.pop(p, None)
+elif active_tab == "Relative Energies":
+    for p in [
+        "compare_mode", "compare", "sol_file", "dry_file", "left_file", "right_file",
+        "setup", "setup_left_file", "setup_right_file", "file", "show_all", "sync_cameras",
+    ]:
+        next_params.pop(p, None)
 elif active_tab == "Data Table":
     for p in [
         "compare_mode", "compare", "sol_file", "dry_file", "left_file", "right_file",
-        "setup", "setup_left_file", "setup_right_file", "file",
+        "setup", "setup_left_file", "setup_right_file", "file", "show_all", "sync_cameras", "show_singletons",
     ]:
         next_params.pop(p, None)
 
