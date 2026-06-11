@@ -854,6 +854,21 @@ def render_relative_energy_comparison_table(source_df):
     for nucleotide in sorted(display_source['nucleotide'].dropna().unique()):
         nucleotide_df = display_source[display_source['nucleotide'] == nucleotide].copy()
         st.subheader(str(nucleotide).upper())
+        group_cols = ['solvent_state', 'surface', 'role', 'atom_signature']
+        group_keys = nucleotide_df[group_cols].apply(tuple, axis=1)
+        group_palette = [
+            "rgba(59, 130, 246, 0.12)",
+            "rgba(245, 158, 11, 0.12)",
+            "rgba(16, 185, 129, 0.12)",
+            "rgba(168, 85, 247, 0.12)",
+            "rgba(244, 63, 94, 0.12)",
+            "rgba(6, 182, 212, 0.12)",
+        ]
+        group_colours = {
+            key: group_palette[i % len(group_palette)]
+            for i, key in enumerate(group_keys.drop_duplicates())
+        }
+        row_colours = group_keys.map(group_colours).tolist()
         formatted = nucleotide_df[
             [
                 'solvent_state',
@@ -894,7 +909,17 @@ def render_relative_energy_comparison_table(source_df):
         formatted['final energy (Eh)'] = formatted['final energy (Eh)'].map(_format_energy_hartree)
         for col in ['final bond order', 'intramol lock dist (A)', 'anchoring dist (A)']:
             formatted[col] = formatted[col].map(lambda value: _format_metric(value))
-        st.dataframe(formatted, use_container_width=True, hide_index=True)
+
+        def mark_comparable_group(row):
+            colour = row_colours[row.name]
+            return [f"background-color: {colour}" for _ in row]
+
+        formatted = formatted.reset_index(drop=True)
+        styled = formatted.style.apply(
+            mark_comparable_group,
+            axis=1,
+        )
+        st.dataframe(styled, use_container_width=True, hide_index=True)
 
 
 def _format_metric(value, unit=""):
