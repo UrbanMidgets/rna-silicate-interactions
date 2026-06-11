@@ -815,10 +815,12 @@ def build_relative_energy_comparison_rows(source_df):
         group_energies = table.loc[idx, 'final_energy_kj_mol']
         table.loc[idx, 'relative_energy_kj_mol'] = group_energies - group_energies.min()
 
+    state_order = {"solvated": 0, "dry": 1}
+    table["solvent_state_sort"] = table["solvent_state"].map(state_order).fillna(99)
     return table.sort_values(
-        ['nucleotide', 'solvent_state', 'surface', 'role', 'atom_count', 'relative_energy_kj_mol', 'frame', 'file'],
+        ['nucleotide', 'solvent_state_sort', 'surface', 'role', 'atom_count', 'relative_energy_kj_mol', 'frame', 'file'],
         na_position='last',
-    )
+    ).drop(columns=["solvent_state_sort"])
 
 
 def render_relative_energy_comparison_table(source_df):
