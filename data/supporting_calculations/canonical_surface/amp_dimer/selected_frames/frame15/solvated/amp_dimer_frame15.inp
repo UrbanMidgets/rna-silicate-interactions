@@ -1,9 +1,0 @@
-! PBE0 D3BJ CPCM(water) Opt def2-TZVP
-
-%pal
-  nprocs 8
-end
-
-%maxcore 2500
-
-*xyzfile -2 1 frame15.xyz
