@@ -29,6 +29,8 @@ CALC_SUFFIXES = (
     ".bibtex",
     ".densitiesinfo",
     ".cpcm_corr",
+    ".cpcm",
+    ".property.txt",
 )
 
 CHECK_SUFFIXES = CALC_SUFFIXES + (
@@ -286,9 +288,7 @@ def copy_supporting() -> None:
     # AMP Dimer on canonical surface
     dimer_dst = DATA_ROOT / "supporting_calculations" / "canonical_surface" / "amp_dimer"
     copy_docking(SOURCE_ROOT / "dimer" / "docking", dimer_dst, system="amp_dimer", surface="canonical", role="supporting")
-    copy_frame_set(SOURCE_ROOT / "dimer" / "frames", dimer_dst, system="amp_dimer", surface="canonical", role="supporting")
-    # Also copy the GFN checks for dimer
-    copy_recursive_filtered(SOURCE_ROOT / "dimer" / "frames_gfn", dimer_dst / "checks" / "gfn_frames", role="supporting", system="amp_dimer", surface="canonical", frame="", state="supporting", suffixes=CHECK_SUFFIXES, notes="GFN dimer checks")
+    copy_frame_set(SOURCE_ROOT / "dimer" / "frames_gfn" / "frames", dimer_dst, system="amp_dimer", surface="canonical", role="supporting")
     copy_recursive_filtered(SOURCE_ROOT / "dimer" / "geom_opt", dimer_dst / "checks" / "geom_opt", role="supporting", system="amp_dimer", surface="canonical", frame="", state="supporting", suffixes=CHECK_SUFFIXES, notes="dimer geometry optimization checks")
     # Small XYZ references in dimer root
     for name in ("amp2.xyz", "amp2_c.xyz", "amp2_h.xyz", "amp3.xyz"):
