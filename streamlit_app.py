@@ -823,6 +823,109 @@ def build_relative_energy_comparison_rows(source_df):
     ).drop(columns=["solvent_state_sort"])
 
 
+def format_relative_energy_export_table(source_df, show_extended_data=False, include_nucleotide=False):
+    columns = [
+        'solvent_state',
+        'surface',
+        'frame',
+        'file',
+        'relative_energy_kj_mol',
+        'final_energy_hartree',
+        'classification',
+    ]
+    if include_nucleotide:
+        columns.insert(0, 'nucleotide')
+    if show_extended_data:
+        columns.extend(
+            [
+                'role',
+                'bond_formed',
+                'sterically_locked',
+                'final_bond_order',
+                'intramolecular_lock_distance_A',
+                'anchoring_distance_A',
+                'atom_count',
+                'orca_output',
+                'energy_record_count',
+                'atom_signature',
+            ]
+        )
+
+    formatted = source_df[columns].rename(
+        columns={
+            'solvent_state': 'solvent state',
+            'relative_energy_kj_mol': 'relative energy (kJ/mol)',
+            'final_energy_hartree': 'final energy (Eh)',
+            'bond_formed': 'bond formed',
+            'sterically_locked': 'sterically locked',
+            'final_bond_order': 'final bond order',
+            'intramolecular_lock_distance_A': 'intramol lock dist (A)',
+            'anchoring_distance_A': 'anchoring dist (A)',
+            'atom_count': 'atom count',
+            'orca_output': 'ORCA output',
+            'energy_record_count': 'energy records',
+            'atom_signature': 'atom composition',
+        }
+    )
+    formatted['relative energy (kJ/mol)'] = formatted['relative energy (kJ/mol)'].map(_format_signed_energy)
+    formatted['final energy (Eh)'] = formatted['final energy (Eh)'].map(_format_energy_hartree)
+    for col in ['final bond order', 'intramol lock dist (A)', 'anchoring dist (A)']:
+        if col in formatted.columns:
+            formatted[col] = formatted[col].map(lambda value: _format_metric(value))
+    return formatted.reset_index(drop=True)
+
+
+def build_relative_energy_export_html(source_df, show_extended_data=False):
+    export_df = source_df.copy().reset_index(drop=True)
+    group_cols = ['nucleotide', 'solvent_state', 'surface', 'role', 'atom_signature']
+    group_keys = export_df[group_cols].apply(tuple, axis=1)
+    group_palette = [
+        "#dbeafe",
+        "#fef3c7",
+        "#d1fae5",
+        "#ede9fe",
+        "#ffe4e6",
+        "#cffafe",
+    ]
+    group_colours = {
+        key: group_palette[i % len(group_palette)]
+        for i, key in enumerate(group_keys.drop_duplicates())
+    }
+    row_colours = group_keys.map(group_colours).tolist()
+    formatted = format_relative_energy_export_table(
+        export_df,
+        show_extended_data=show_extended_data,
+        include_nucleotide=True,
+    )
+
+    def mark_comparable_group(row):
+        colour = row_colours[row.name]
+        return [f"background-color: {colour}" for _ in row]
+
+    styled = formatted.style.apply(mark_comparable_group, axis=1).hide(axis="index")
+    table_html = styled.to_html()
+    return f"""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Relative Energy Table</title>
+<style>
+body {{ font-family: Arial, sans-serif; margin: 24px; }}
+h1 {{ font-size: 20px; margin-bottom: 8px; }}
+p {{ max-width: 960px; font-size: 13px; line-height: 1.4; }}
+table {{ border-collapse: collapse; font-size: 11px; width: 100%; }}
+th, td {{ border: 1px solid #d1d5db; padding: 5px 7px; text-align: left; vertical-align: top; }}
+th {{ background: #f3f4f6; font-weight: 700; }}
+</style>
+</head>
+<body>
+<h1>Relative Energy Table</h1>
+<p>Final ORCA energies are converted to relative energies only within matching setup groups: same nucleotide, surface, solvent state, role, and atom composition. Dry and solvated calculations are never mixed. Colour-coordinated rows indicate directly comparable structures.</p>
+{table_html}
+</body>
+</html>"""
+
+
 def render_relative_energy_comparison_table(source_df):
     st.header("Relative Energy Table")
     st.caption(
@@ -840,6 +943,11 @@ def render_relative_energy_comparison_table(source_df):
         value=get_bool_param("show_singletons", False),
     )
     update_bool_param("show_singletons", show_singletons, False)
+    show_extended_data = st.checkbox(
+        "Extended data/information",
+        value=get_bool_param("show_extended_data", False),
+    )
+    update_bool_param("show_extended_data", show_extended_data, False)
     display_source = energy_table if show_singletons else energy_table[energy_table['valid_energy_count'] >= 2]
     if display_source.empty:
         st.info("No comparable groups with two or more matched final energies were found for the current filters.")
@@ -869,46 +977,10 @@ def render_relative_energy_comparison_table(source_df):
             for i, key in enumerate(group_keys.drop_duplicates())
         }
         row_colours = group_keys.map(group_colours).tolist()
-        formatted = nucleotide_df[
-            [
-                'solvent_state',
-                'surface',
-                'role',
-                'frame',
-                'file',
-                'relative_energy_kj_mol',
-                'final_energy_hartree',
-                'classification',
-                'bond_formed',
-                'sterically_locked',
-                'final_bond_order',
-                'intramolecular_lock_distance_A',
-                'anchoring_distance_A',
-                'atom_count',
-                'orca_output',
-                'energy_record_count',
-                'atom_signature',
-            ]
-        ].rename(
-            columns={
-                'solvent_state': 'solvent state',
-                'relative_energy_kj_mol': 'relative energy (kJ/mol)',
-                'final_energy_hartree': 'final energy (Eh)',
-                'bond_formed': 'bond formed',
-                'sterically_locked': 'sterically locked',
-                'final_bond_order': 'final bond order',
-                'intramolecular_lock_distance_A': 'intramol lock dist (A)',
-                'anchoring_distance_A': 'anchoring dist (A)',
-                'atom_count': 'atom count',
-                'orca_output': 'ORCA output',
-                'energy_record_count': 'energy records',
-                'atom_signature': 'atom composition',
-            }
+        formatted = format_relative_energy_export_table(
+            nucleotide_df,
+            show_extended_data=show_extended_data,
         )
-        formatted['relative energy (kJ/mol)'] = formatted['relative energy (kJ/mol)'].map(_format_signed_energy)
-        formatted['final energy (Eh)'] = formatted['final energy (Eh)'].map(_format_energy_hartree)
-        for col in ['final bond order', 'intramol lock dist (A)', 'anchoring dist (A)']:
-            formatted[col] = formatted[col].map(lambda value: _format_metric(value))
 
         def mark_comparable_group(row):
             colour = row_colours[row.name]
@@ -920,6 +992,18 @@ def render_relative_energy_comparison_table(source_df):
             axis=1,
         )
         st.dataframe(styled, use_container_width=True, hide_index=True)
+
+    export_html = build_relative_energy_export_html(
+        display_source,
+        show_extended_data=show_extended_data,
+    )
+    st.download_button(
+        "Download coloured relative energy table (HTML)",
+        data=export_html,
+        file_name="relative_energy_table.html",
+        mime="text/html",
+        use_container_width=True,
+    )
 
 
 def _format_metric(value, unit=""):
