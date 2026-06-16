@@ -827,7 +827,6 @@ def format_relative_energy_export_table(source_df, show_extended_data=False, inc
     columns = [
         'solvent_state',
         'surface',
-        'role',
         'frame',
         'file',
         'relative_energy_kj_mol',
@@ -839,6 +838,7 @@ def format_relative_energy_export_table(source_df, show_extended_data=False, inc
     if show_extended_data:
         columns.extend(
             [
+                'role',
                 'bond_formed',
                 'sterically_locked',
                 'final_bond_order',
