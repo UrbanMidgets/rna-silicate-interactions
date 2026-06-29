@@ -1,4 +1,4 @@
-! PBE0 D3BJ CPCM(water) Opt def2-TZVP
+! PBE0 D3BJ Opt def2-TZVP
 
 %pal
   nprocs 8
