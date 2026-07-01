@@ -1,14 +1,10 @@
-# ESP Source Calculation Files
+# ESP Calculations
 
-This folder contains local copies of optimized ORCA calculation files intended for electrostatic potential map generation.
+This directory mirrors `/data/Seafile/esp_calculations` and contains the ORCA geometry optimisations, generated electron-density cubes, generated ESP cubes, and the sulfanilic-acid ORCA ESP tutorial test.
 
-Included targets:
+The following files are intentionally omitted because they exceed GitHub's 100 MB per-file limit and Git LFS is not installed on this machine:
 
-- `amp_protonated/` from `/data/Seafile/amp/protonated/geom/`
-- `cmp_protonated/` from `/data/Seafile/cmp/protonated/geom/`
-- `ump/` from `/data/Seafile/ump/geom/`
-- `aluminium_surface/` from `/data/Seafile/al_surf/`
+- `flower_ring/flower_ring_geom.densities`
+- `flower_ring_al/flower_ring_al_geom.densities`
 
-Each folder includes the final `.xyz`, `.inp`, `.out`, `.gbw`, and supporting ORCA metadata needed to inspect the calculation and generate ESP maps with ORCA tooling.
-
-Large `.densities` files were not copied; they are not needed for `orca_plot` ESP cube generation from `.gbw` files.
+The generated cube files needed for plotting are included for all systems.
