@@ -89,6 +89,32 @@ if df.empty:
 # Sidebar filters
 st.sidebar.header("Filters")
 
+FILTER_QUERY_PARAMS = [
+    "surface",
+    "nuc",
+    "state",
+    "class",
+    "role",
+    "structure",
+    "file",
+    "compare",
+    "sol_file",
+    "dry_file",
+    "left_file",
+    "right_file",
+    "setup",
+    "setup_left_file",
+    "setup_right_file",
+]
+
+
+def reset_filters():
+    for param_name in FILTER_QUERY_PARAMS:
+        if param_name in st.query_params:
+            del st.query_params[param_name]
+    st.rerun()
+
+
 def get_options(dataframe, column):
     opts = sorted([str(x) for x in dataframe[column].unique() if x])
     return ["All"] + opts
@@ -241,6 +267,7 @@ trajectory_stride = st.sidebar.slider(
 update_int_param("trj_stride", trajectory_stride, 1)
 
 st.sidebar.markdown(f"**Matches:** {len(filtered_df)}")
+st.sidebar.button("Reset filters", use_container_width=True, on_click=reset_filters)
 
 # Grouping by system/surface/frame for comparison
 # We want to identify pairs of (solvated, dry) for the same frame
@@ -932,6 +959,25 @@ def render_relative_energy_comparison_table(source_df):
         "Final ORCA energies are converted to relative energies only within matching setup groups: "
         "same nucleotide, surface, solvent state, role, and atom composition. Dry and solvated calculations are never mixed. Directly comparable rows are colourcoordinated in groups, but use the relative energy values and atom signatures to check comparability between groups."
     )
+
+    active_filters = []
+    for label, value in [
+        ("Surface", surface),
+        ("System", system),
+        ("Solvent State", solvent_state),
+        ("Classification", classification if 'classification' in filtered_df.columns else "All"),
+        ("Role", role),
+    ]:
+        if value != "All":
+            active_filters.append(f"{label}: {value}")
+    if active_filters:
+        st.info(
+            "Relative energies are currently limited by sidebar filters: "
+            + "; ".join(active_filters)
+            + "."
+        )
+        if st.button("Clear relative energy filters", use_container_width=True):
+            reset_filters()
 
     energy_table = build_relative_energy_comparison_rows(source_df)
     if energy_table.empty:
