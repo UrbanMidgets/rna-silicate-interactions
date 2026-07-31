@@ -1,0 +1,35 @@
+! MD PBE0 D3BJ def2-TZVP RIJCOSX def2/J
+
+%pal
+  nprocs 8
+end
+
+%md
+  Timestep 0.5_fs
+  Initvel 353 #80degC
+  Thermostat CSVR
+  dump position stride 1 filename "trajectory.xyz"
+  Run 2000
+end
+
+%maxcore 3500
+
+%geom
+  Constraints
+    { C 101 C}
+    { C 100 C}
+    { C 99 C}
+    { C 97 C}
+    { C 95 C}
+    { C 94 C}
+    { C 93 C}
+    { C 92 C}
+    { C 91 C}
+    { C 90 C}
+    { C 96 C}
+    { C 98 C}
+  end
+end
+
+
+*xyzfile -1 1 amp_frame11.xyz

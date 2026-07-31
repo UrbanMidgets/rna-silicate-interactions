@@ -1,0 +1,5 @@
+  Timestep 0.5_fs
+  Initvel 353 #80degC
+  Thermostat CSVR
+  dump position stride 1 filename "trajectory.xyz"
+  Run 2000

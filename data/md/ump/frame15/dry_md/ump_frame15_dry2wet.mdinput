@@ -1,0 +1,20 @@
+  Timestep 1_fs
+  Initvel 353 #80degC
+  Thermostat CSVR 353_K timecon 50_fs
+
+  # Freeze atoms
+  constraint add cartesian 90
+  constraint add cartesian 91
+  constraint add cartesian 92
+  constraint add cartesian 93
+  constraint add cartesian 94
+  constraint add cartesian 95
+  constraint add cartesian 96
+  constraint add cartesian 97
+  constraint add cartesian 98
+  constraint add cartesian 99
+  constraint add cartesian 100
+  constraint add cartesian 101
+
+  dump position stride 1 filename "trajectory.xyz"
+  Run 2000

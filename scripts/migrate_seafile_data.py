@@ -38,6 +38,19 @@ CHECK_SUFFIXES = CALC_SUFFIXES + (
     ".svg",
 )
 
+MD_SUFFIXES = CHECK_SUFFIXES + (
+    ".md.log",
+    ".mdinput",
+)
+
+MD_RUNS = (
+    ("amp", "frame11", "dry_md", SOURCE_ROOT / "amp" / "frames" / "frame11" / "dry" / "dry_md"),
+    ("amp", "frame11", "dry_md_fixed", SOURCE_ROOT / "amp" / "frames" / "frame11" / "dry" / "dry_md_fixed"),
+    ("amp", "frame12", "dry_md", SOURCE_ROOT / "amp" / "frames" / "frame12" / "dry" / "dry_md"),
+    ("ump", "frame15", "dry_md", SOURCE_ROOT / "ump" / "frames" / "frame15" / "dry" / "dry_md"),
+    ("ump", "frame15", "1000deg", SOURCE_ROOT / "ump" / "frames" / "frame15" / "dry" / "1000deg"),
+)
+
 DRY_CHECKS_TO_INCLUDE = {
     ("amp", "canonical", "frame12", "dry_md"),
     ("ump", "canonical", "frame15", "1000deg"),
@@ -237,6 +250,7 @@ def write_readmes() -> None:
         "primary_calculations/README.md": "# Primary Calculations\n\nPrimary neutral nucleotide calculations are split into `canonical_surface/` and `aluminium_surface/`. Within each surface, AMP, CMP, GMP, and UMP each contain docking provenance and selected optimisation frames.\n\nUse `selected_frames/` for the thesis-primary solvated and dry optimisations. `checks/` contains non-primary calculations.\n",
         "supporting_calculations/README.md": "# Supporting Calculations\n\nSupporting data includes protonated nucleotide systems, AMP dimer calculations, and magnesium docking. These are organized by surface type (`canonical_surface` or `aluminium_surface`) and system name to match the primary calculation layout.\n",
         "reference_structures/README.md": "# Reference Structures\n\nStandalone reference structures used by the calculation set, including the aluminium-substituted silicate surface reference.\n",
+        "md/README.md": "# Molecular Dynamics Data\n\nCurated MD runs copied from `/data/Seafile`. This folder keeps trajectories, MD inputs/logs, energy and constraint CSVs, ORCA input/output, density metadata, and plots. Large restart, scratch, binary, and basis files remain only in the raw archive.\n\nIncluded systems are AMP frame11 dry MD, AMP frame11 fixed dry MD, AMP frame12 fixed dry MD, UMP frame15 dry-to-wet MD, and UMP frame15 1000 K dry-to-wet MD. No AMP dimer MD run was found under `/data/Seafile/dimer`; AMP dimer optimisation/docking data remains in `data/supporting_calculations/canonical_surface/amp_dimer/`.\n",
     }.items():
         path = DATA_ROOT / rel
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -306,6 +320,24 @@ def copy_references_and_scripts() -> None:
             copy_file(src, scripts_dst / name, role="script", system="", surface="", frame="", state="script")
 
 
+def copy_md_data() -> None:
+    for system, frame, run_name, src_dir in MD_RUNS:
+        dst_dir = DATA_ROOT / "md" / system / frame / run_name
+        name_overrides = {"trajectory.xyz": f"{system}_{frame}_{run_name}_trajectory.xyz"}
+        copy_recursive_filtered(
+            src_dir,
+            dst_dir,
+            role="md",
+            system=system,
+            surface="canonical",
+            frame=frame,
+            state=run_name,
+            suffixes=MD_SUFFIXES,
+            notes="curated molecular dynamics run; raw scratch and restart files excluded",
+            name_overrides=name_overrides,
+        )
+
+
 def main() -> None:
     global include_swarms
     parser = argparse.ArgumentParser(description="Create a curated thesis data layout from /data/Seafile.")
@@ -319,6 +351,7 @@ def main() -> None:
     copy_primary()
     copy_supporting()
     copy_references_and_scripts()
+    copy_md_data()
     write_readmes()
     write_manifest()
     print(f"Copied {len(manifest)} files into {DATA_ROOT}")

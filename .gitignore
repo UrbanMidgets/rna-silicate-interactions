@@ -13,3 +13,6 @@ data/**/*.bas[0-9]
 data/**/*.png
 data/**/*.mp4
 data/**/*.gif
+
+# Curated MD logs are small text provenance files kept under data/md/.
+!data/md/**/*.md.log

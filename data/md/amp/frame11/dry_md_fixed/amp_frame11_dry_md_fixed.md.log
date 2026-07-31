@@ -1,0 +1,469 @@
+
+Will write log file to "amp_frame11_dry_md_fixed.md.log".
+
+Command line:  /home/bic1/orca_6_1_1_avx2/orca_md -orca amp_frame11_dry_md_fixed
+
+-------------------------------------------------------------------------------------------
+
+
+     _____    ___    _   _       _                  ______ ______  _____   ___  
+    /  ___|  / _ \  | \ | |     | |           _    /  __  \| ___ \/  __ \ / _ \ 
+    \ `--.  / /_\ \ |  \| |   __| | _   _   _| |_  | |  | || |_/ /| /  \// /_\ \
+     `--. \ |  _  | | . ` |  / _` || | | | |_   _| | |  | ||    / | |    |  _  |
+    /\__/ / | | | | | |\  | | (_| || |_| |   |_|   | \__/ || |\ \ | \__/\| | | |
+    \____/  \_| |_/ \_| \_/  \__,_| \__, |          \____/ \_| \_| \____/\_| |_/
+                                     __/ |                                      
+                                    |___/                                       
+
+
+    ####################################################################
+    ########     Scriptable Nuclear Dynamics (SANdy) + ORCA     ########
+    ########           (c) Martin Brehm, 2016 - 2025            ########
+    ########           Paderborn University, Germany            ########
+    ########           https://sanscript.org/orcamd             ########
+    ####################################################################
+
+
+  * Compiled as ORCA module. Called from ORCA.
+  * ORCA base name: "amp_frame11_dry_md_fixed"
+  * Source code version: Jun 07 2025, compiled at Nov 24 2025 07:23:22.
+  * Enabled features: SAN_MD, SAN_INTERPRETER
+  * Libraries: KISS_FFT, LBFGSBC
+  * Executable name: "/home/bic1/orca_6_1_1_avx2/orca_md"
+  * Messages are redirected, Errors are redirected, Output is redirected, Input from stdin
+  * Running on BIC1-Ubuntu at Thu Mar 26 16:54:16 2026 (PID 725552)
+  * Running in /data/Seafile/amp/frames/frame11/dry/dry_md_fixed
+
+    -----------------------------------------------
+
+    Technical information:
+
+  * Compiler:      LLVM, CLANG 20.1.6, "Clang 20.1.6 (/home/frankw/CompEnv/src/llvm2016/llvm-project/clang 47addd4540b4c393e478ba92bea2589e330c57fb)", Linux, __cplusplus=201103L
+  * Compile host:  x86_64, Little Endian, char=8bits, int=4b, long=8b, ll=8b, addr=8b, 0x01020304=4,3,2,1.
+  * Class sizes:   InputElem=248, ValuePair=112, Type=96, Value=8, VMToken=8, VMInst=8
+  * Compile flags: MMX, SSE, SSE2, SSE3, SSSE3, SSE4.1, SSE4.2, POPCNT, FMA3, AVX, AVX2
+  * Local machine: Intel(R) Core(TM) i7-14700 (GenuineIntel), Family 6, Model 183, Stepping 1
+                   1 CPU, 20 cores, 28 threads,  Uptime 6d 05h 47m 48s
+                   MMX, SSE, SSE2, SSE3, SSSE3, SSE4.1, SSE4.2, POPCNT, AES, FMA3, AVX, AVX2, SHA
+                   Caches: 14x L1d (672 KiB), 14x L1i (448 KiB), 14x L2 (28 MiB), 1x L3 (33 MiB)
+  * Op. System:    Linux Mint 22.1, Linux version 6.8.0-90-generic 
+  * Phys. Memory:  62.42 GiB total,  21.73 GiB free
+  * Stack size:    infinite
+
+
+The following libraries are included:
+
+  * KISS FFT,   Version 131.1.0 (02/2021), License: BSD 3-clause
+      (c) 2003-2010 Mark Borgerding, see https://github.com/mborgerding/kissfft
+
+  * L-BFGS-B-C, Version 3.0 (04/2011),     License: BSD 3-clause
+      (c) Stephen Becker, see https://github.com/stephenbeckr/L-BFGS-B-C
+
+  * MT19937 Pseudo Random Number Gen.,     License: Custom (permissive)
+      (c) 1997-2005 Makoto Matsumoto, Takuji Nishimura, Mutsuo Saito, see https://github.com/clibs/mt19937ar
+
+
+Initializing SAN engine...
+  24 physical quantities and 49 units added.
+  Initialized SAN language:
+    97 operators, 57 keywords, 4 namespaces, 35 types, 183 flags
+Done.
+
+
+>>> Reading Input File >>>
+
+Reading input file "amp_frame11_dry_md_fixed.mdinput" ...
+  503 bytes read.
+  20 lines.
+Tokenizing input...
+Found 63 tokens in file.
+  ( 46 identifiers,      16 numeric literals,  2 comments,  
+     1 string literals )
+Line endings are uniform: 20 x \n
+
+<<< Finished Reading Input File (took 0.000 seconds) <<<
+
+
+Using the following settings:
+  Interpret:              true
+  Execution:              SAN-VM
+  Parser verbose level:   1
+  Execute verbose level:  2
+  Syntax highlighting:    0
+  Static vars:            false
+  Dynamic types:          true
+  Max. recursion depth:   200
+  Max. nesting depth:     1000
+  Max. argument count:    100
+  Only parse:             false
+
+
+>>> Parsing Input Script >>>
+
+Handled 1 underscore identifiers.
+Handling module imports...
+  Importing module "Math" to global namespace.
+  Importing module "MD" to global namespace.
+Handled 2 module imports.
+Handled 17 variable occurrences.
+Assigned 18 identifiers.
+Handling functions,      iteration  1...
+                         iteration  2...
+                         iteration  3...
+Handling "FOR" loops...
+Handling AutoDecl,       iteration  1...
+No auto declarations.
+Assigned 27 flags, re-doing function handling...
+Handling functions ( 2), iteration  1...
+  Moving "Void" argument 2 ("Thermostat") of function "Initvel" up 1 levels to "ROOT".
+                         iteration  2...
+Handling "FOR" loops...
+Handling AutoDecl,       iteration  1...
+No auto declarations.
+Handling functions, final pass...
+  Moving "Void" argument 4 ("dump") of function "constraint" up 1 levels to "ROOT".
+Function handling done (2 macro-iterations, 0.006 seconds).
+Handling keywords,       iteration  1...
+Prepared 17 argument lists.
+Assigned 45 read-only flags.
+Assigned 64 simple VP flags.
+Assigned 63 tree IDs.
+
+<<< Finished Parsing Input Script (took 0.007 seconds) <<<
+
+
+SAN-VM: Compiling...
+  Optimization level: Not specified. Using default ("-O2").
+Done (took 0.000 seconds).
+
+
+  Part              # Tokens    # Registers    # Shortcuts    # Optimizations
+  ---------------------------------------------------------------------------
+  Main Program            92              0              0                  0
+
+
+-------------------------------------------------------------------------------------------
+
+>>> Initializing MD engine with interface "ORCA" >>>
+
+
+
+>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+>>>   Output of System Information (from ORCA)   >>>
+>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+(the output of geometry and basis set information is missing in the MD log file,
+ as it is written to the screen directly by ORCA.)
+
+############################################
+   Total Atom Count:             162
+   Total System Mass:       2112.502 a.m.u.
+   Total Basis Dimension:       3947
+   Total Electron Number:       1080
+   Total Charge:                  -1
+   Total Multiplicity:             1
+   Spin Treatment:        Restricted
+  ------------------------------------------
+   ReducePrint:                 true
+   Print Mulliken Pop:             1
+   Print Loewdin Pop:              1
+   Print Mayer Pop:                1
+   Print Orbital Energies:         1
+############################################
+
+<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+<<<          End of System Information           <<<
+<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+
+
+Initializing regions...
+
+Defined regions:
+         All:   162 atoms,   2112.502 a.m.u.
+          QM:   All
+      Active:   All
+
+
+
+### System Geometry ###
+
+  * Region "All" = "Active" = "QM":
+      Bounding box: from (    1.410 |   22.173 |    5.526 )
+                      to (   21.625 |   42.437 |   13.359 ) Angstrom
+      System extent:     (   20.214 |   20.264 |    7.833 ) Angstrom
+      Center of mass:    (   11.836 |   32.673 |    8.214 ) Angstrom
+      Total mass:          2112.502 a.m.u.
+
+      Moment of inertia: (     52993.79 |      -110.55 |     -2237.18 )
+                         (      -110.55 |     53666.33 |     -2293.46 ) a.m.u. Angstrom^2
+                         (     -2237.18 |     -2293.46 |     94406.07 )
+      Singular values:   (     94653.88 |     52799.61 |     53612.71 ) a.m.u. Angstrom^2
+
+
+
+Smallest interatomic distance from active region: 0.966220 Angstrom (atoms 82 - 122).
+
+
+<<< MD engine initialization done (took 0.451 seconds) <<<
+
+
+###############################################################
+########        Executing Input Script (SAN-VM)        ########
+###############################################################
+
+Execution verbose level is 2.
+
+-------------------------------------------------------------------------------------------
+
+
+
+>>>>>> Timestep( 0.5_fs )
+
+Setting integration time step to 0.50 fs.
+
+The lightest element in the active region has an atomic mass of 1.008 a.m.u.
+Recommending time step not larger than 0.50 .. 1.00 fs.
+  --> choice seems reasonable
+
+
+>>>>>> Initvel( 353 )
+
+
+Note: In function func_Initvel(): Found temperature value "353" without unit - assuming it is in Kelvin.
+In amp_frame11_dry_md_fixed.mdinput:2:
+      Initvel 353 #80degC
+              ^^^
+
+Old temperature of the total system is     0.000 K.
+
+Initializing atom velocities for region "all" to 353.000 K:
+  Creating Maxwell-Boltzmann distribution...
+  Temperature after random initialization is 385.782 K.
+  Rescaling velocities to match desired initial temperature (factor 0.956569)...
+  Removing initial center of mass movement...
+  Temperature after center of mass movement removal is 352.921 K.
+  Removing initial angular velocity...
+    Angular momentum before:  (   4.19122759 |   4.86823667 |  -3.28239866 ) a.m.u. Angstrom^2 fs^-1
+    Angular velocity before:  (   0.00007798 |   0.00008956 |  -0.00003075 ) fs^-1
+    Angular momentum after:   (  -0.00000000 |   0.00000000 |  -0.00000000 ) a.m.u. Angstrom^2 fs^-1
+    Angular velocity after:   (  -0.00000000 |   0.00000000 |  -0.00000000 ) fs^-1
+  Temperature after angular velocity removal is 350.783 K.
+  Rescaling velocities to match desired initial temperature (factor 1.003155)...
+Done.
+
+New temperature of the total system is   353.000 K.
+
+
+>>>>>> Thermostat( CSVR )
+
+Warning: No thermostat target temperature specified. Using 353.00 K from last "Initvel" command.
+Warning: No thermostat time constant specified. Using 10 fs as default (rather strong).
+Switching on thermostat for region "All": Type CSVR, temperature 353.00 K, time constant 10.00 fs, global.
+
+
+>>>>>> constraint( add, cartesian, 90 )
+
+Added Cartesian constraint for atom 90, dimension XYZ, target value ( 4.0747 | 24.9868 | 8.0366 ) Angstrom.
+
+
+>>>>>> constraint( add, cartesian, 91 )
+
+Added Cartesian constraint for atom 91, dimension XYZ, target value ( 1.4104 | 29.6020 | 8.0367 ) Angstrom.
+
+
+>>>>>> constraint( add, cartesian, 92 )
+
+Added Cartesian constraint for atom 92, dimension XYZ, target value ( 1.4104 | 35.0080 | 8.0367 ) Angstrom.
+
+
+>>>>>> constraint( add, cartesian, 93 )
+
+Added Cartesian constraint for atom 93, dimension XYZ, target value ( 4.0747 | 39.6232 | 8.0366 ) Angstrom.
+
+
+>>>>>> constraint( add, cartesian, 94 )
+
+Added Cartesian constraint for atom 94, dimension XYZ, target value ( 8.9482 | 22.1733 | 8.0383 ) Angstrom.
+
+
+>>>>>> constraint( add, cartesian, 95 )
+
+Added Cartesian constraint for atom 95, dimension XYZ, target value ( 8.9482 | 42.4367 | 8.0383 ) Angstrom.
+
+
+>>>>>> constraint( add, cartesian, 96 )
+
+Added Cartesian constraint for atom 96, dimension XYZ, target value ( 14.2778 | 22.1732 | 8.0383 ) Angstrom.
+
+
+>>>>>> constraint( add, cartesian, 97 )
+
+Added Cartesian constraint for atom 97, dimension XYZ, target value ( 14.2778 | 42.4368 | 8.0383 ) Angstrom.
+
+
+>>>>>> constraint( add, cartesian, 98 )
+
+Added Cartesian constraint for atom 98, dimension XYZ, target value ( 18.9606 | 24.8762 | 8.0364 ) Angstrom.
+
+
+>>>>>> constraint( add, cartesian, 99 )
+
+Added Cartesian constraint for atom 99, dimension XYZ, target value ( 18.9606 | 39.7338 | 8.0364 ) Angstrom.
+
+
+>>>>>> constraint( add, cartesian, 100 )
+
+Added Cartesian constraint for atom 100, dimension XYZ, target value ( 21.6247 | 29.4914 | 8.0366 ) Angstrom.
+
+
+>>>>>> constraint( add, cartesian, 101 )
+
+Added Cartesian constraint for atom 101, dimension XYZ, target value ( 21.6247 | 35.1186 | 8.0366 ) Angstrom.
+
+
+>>>>>> dump( position, stride, 1, filename, "trajectory.xyz" )
+
+Modified writing position trajectory for region "all": Format XYZ, stride 1, filename "trajectory.xyz", append.
+
+
+>>>>>> Run( 2000 )
+
+
+***************************************************
+****    Starting MD loop for     2000 steps    ****
+***************************************************
+
+
+12 constraints are defined.
+
+Enforcing constraints prior to MD run...
+  RATTLE Iteration    1: Max. deviation 0
+Converged.
+
+
+Defined regions:
+         All:   162 atoms,   2112.502 a.m.u.
+          QM:   All
+      Active:   All
+
+
+Dump: Will write Position data of region "All" in XYZ format with stride 1 to "trajectory.xyz" (append).
+
+Hint: To compute properties (dipole, etc.) in each step, specify "dump properties" before run.
+
+Active Thermostats:
+  (*) Region "All": Type CSVR, temperature 353.00 K, time constant 10.00 fs, global.
+
+
+Defined Constraints:
+     1.) Cartesian constraint on atom  H90   , direction XYZ, target ( 4.075 | 24.987 | 8.037 ) Angstrom.
+     2.) Cartesian constraint on atom  H91   , direction XYZ, target ( 1.410 | 29.602 | 8.037 ) Angstrom.
+     3.) Cartesian constraint on atom  H92   , direction XYZ, target ( 1.410 | 35.008 | 8.037 ) Angstrom.
+     4.) Cartesian constraint on atom  H93   , direction XYZ, target ( 4.075 | 39.623 | 8.037 ) Angstrom.
+     5.) Cartesian constraint on atom  H94   , direction XYZ, target ( 8.948 | 22.173 | 8.038 ) Angstrom.
+     6.) Cartesian constraint on atom  H95   , direction XYZ, target ( 8.948 | 42.437 | 8.038 ) Angstrom.
+     7.) Cartesian constraint on atom  H96   , direction XYZ, target ( 14.278 | 22.173 | 8.038 ) Angstrom.
+     8.) Cartesian constraint on atom  H97   , direction XYZ, target ( 14.278 | 42.437 | 8.038 ) Angstrom.
+     9.) Cartesian constraint on atom  H98   , direction XYZ, target ( 18.961 | 24.876 | 8.036 ) Angstrom.
+    10.) Cartesian constraint on atom  H99   , direction XYZ, target ( 18.961 | 39.734 | 8.036 ) Angstrom.
+    11.) Cartesian constraint on atom  H100  , direction XYZ, target ( 21.625 | 29.491 | 8.037 ) Angstrom.
+    12.) Cartesian constraint on atom  H101  , direction XYZ, target ( 21.625 | 35.119 | 8.037 ) Angstrom.
+
+
+Will write restart file to "amp_frame11_dry_md_fixed.mdrestart" after each step.
+Will write energy statistics to "amp_frame11_dry_md_fixed-md-ener.csv" after each step.
+Will write constraint data to "amp_frame11_dry_md_fixed-constraints.csv" after each step.
+
+The system contains 450 active degrees of freedom (162 active atoms * 3 - 36 active constraints).
+
+Smallest interatomic distance from active region: 0.966220 Angstrom (atoms 82 - 122).
+
+
+
+       Step |  Sim. Time | Iter |  t_Ener |  t_Grad |     Temp |     E_Kin |         E_Pot |         E_Tot |      Cons.Qty | E.Drift
+            |       [fs] |      |     [s] |     [s] |      [K] | [Hartree] |     [Hartree] |     [Hartree] |     [Hartree] |     [K]
+------------|------------|------|---------|---------|----------|-----------|---------------|---------------|---------------|-----------
+          0          0.0          1630.19               343.36    0.244654   -13464.232853   -13463.988200                          
+          1          0.5      6   1233.66    477.22     344.89    0.245744   -13464.229331   -13463.983587   -13463.987774      0.00
+          2          1.0      6   1182.45    467.45     343.45    0.244716   -13464.220920   -13463.976204   -13463.987604      0.11
+          3          1.5      6   1079.96    476.31     336.44    0.239726   -13464.209617   -13463.969891   -13463.987405      0.24
+          4          2.0      6   1188.73    440.93     312.09    0.222377   -13464.198285   -13463.975908   -13463.987250      0.34
+          5          2.5      7   1297.07    443.15     287.91    0.205145   -13464.189407   -13463.984262   -13463.987235      0.35
+          6          3.0      7   1296.31    442.88     276.61    0.197091   -13464.183436   -13463.986345   -13463.987356      0.27
+          7          3.5      7   1281.22    464.79     267.47    0.190580   -13464.178912   -13463.988331   -13463.987490      0.18
+          8          4.0      6   1212.50    429.87     268.07    0.191010   -13464.173767   -13463.982757   -13463.987528      0.16
+          9          4.5      6   1214.86    476.70     269.14    0.191773   -13464.166362   -13463.974589   -13463.987565      0.14
+         10          5.0      6   1174.89    470.75     254.69    0.181475   -13464.155932   -13463.974457   -13463.987507      0.17
+         11          5.5      7   1254.95    474.31     247.86    0.176608   -13464.143608   -13463.966999   -13463.987368      0.26
+         12          6.0      6   1189.82    447.27     234.78    0.167288   -13464.131232   -13463.963945   -13463.987211      0.37
+         13          6.5      6   1219.70    426.03     224.49    0.159958   -13464.121312   -13463.961354   -13463.987080      0.45
+         14          7.0      6   1259.75    441.83     224.47    0.159941   -13464.115536   -13463.955595   -13463.987039      0.48
+         15          7.5      7   1346.80    476.18     217.64    0.155078   -13464.114152   -13463.959075   -13463.987245      0.34
+         16          8.0      7   1240.94    492.74     226.27    0.161224   -13464.115570   -13463.954346   -13463.987372      0.26
+         17          8.5      6   1152.19    466.21     246.74    0.175807   -13464.117665   -13463.941858   -13463.987338      0.28
+         18          9.0      6   1210.04    437.15     251.92    0.179504   -13464.118679   -13463.939174   -13463.987405      0.24
+         19          9.5      6   1196.63    481.40     253.40    0.180555   -13464.117317   -13463.936762   -13463.987384      0.25
+         20         10.0      6   1232.23    485.76     251.12    0.178928   -13464.114110   -13463.935182   -13463.987275      0.32
+         21         10.5      6   1166.07    481.35     249.25    0.177597   -13464.110880   -13463.933283   -13463.987138      0.41
+         22         11.0      6   1199.10    426.70     260.72    0.185771   -13464.109710   -13463.923939   -13463.987059      0.46
+         23         11.5      6   1210.94    428.53     267.91    0.190892   -13464.111584   -13463.920692   -13463.987097      0.44
+         24         12.0      6   1237.33    466.30     273.20    0.194661   -13464.115656   -13463.920995   -13463.987231      0.35
+         25         12.5      6   1203.10    492.13     287.55    0.204889   -13464.119718   -13463.914829   -13463.987386      0.25
+         26         13.0      6   1198.59    487.61     309.19    0.220311   -13464.121436   -13463.901125   -13463.987489      0.19
+         27         13.5      6   1185.25    461.23     324.10    0.230930   -13464.119159   -13463.888228   -13463.987495      0.18
+         28         14.0      6   1224.05    468.43     321.77    0.229272   -13464.112669   -13463.883397   -13463.987398      0.24
+         29         14.5      6   1259.64    465.22     311.85    0.222201   -13464.103683   -13463.881483   -13463.987227      0.36
+         30         15.0      6   1217.07    486.77     302.33    0.215423   -13464.095063   -13463.879640   -13463.987053      0.47
+         31         15.5      6   1205.45    491.40     297.01    0.211630   -13464.089443   -13463.877813   -13463.986962      0.53
+         32         16.0      7   1197.30    413.25     309.36    0.220428   -13464.087947   -13463.867518   -13463.987010      0.50
+         33         16.5      6   1171.22    472.53     307.89    0.219380   -13464.089463   -13463.870084   -13463.987155      0.40
+         34         17.0      7   1293.69    475.53     303.99    0.216600   -13464.091296   -13463.874696   -13463.987373      0.26
+         35         17.5      6   1137.28    478.94     320.78    0.228568   -13464.090478   -13463.861910   -13463.987464      0.20
+         36         18.0      7   1292.58    491.14     324.67    0.231341   -13464.085115   -13463.853775   -13463.987493      0.18
+         37         18.5      7   1250.91    486.74     316.64    0.225614   -13464.074955   -13463.849341   -13463.987326      0.29
+         38         19.0      6   1175.18    480.75     303.96    0.216582   -13464.062467   -13463.845885   -13463.987089      0.44
+         39         19.5      6   1252.83    445.77     288.36    0.205469   -13464.051511   -13463.846042   -13463.986858      0.60
+         40         20.0      6   1217.64    463.44     289.49    0.206271   -13464.045660   -13463.839389   -13463.986778      0.65
+         41         20.5      6   1252.77    474.98     294.50    0.209839   -13464.045813   -13463.835975   -13463.986901      0.57
+         42         21.0      6   1197.41    493.43     308.37    0.219720   -13464.049833   -13463.830113   -13463.987146      0.41
+         43         21.5      6   1206.40    483.62     328.98    0.234410   -13464.053711   -13463.819301   -13463.987376      0.26
+         44         22.0      7   1244.30    476.47     332.62    0.237004   -13464.053613   -13463.816609   -13463.987468      0.20
+         45         22.5      7   1186.43    417.26     328.23    0.233875   -13464.047742   -13463.813867   -13463.987373      0.26
+         46         23.0      7   1309.71    488.29     315.11    0.224526   -13464.037124   -13463.812598   -13463.987148      0.41
+         47         23.5      6   1202.99    431.82     306.84    0.218632   -13464.025065   -13463.806433   -13463.987013      0.49
+         48         24.0      7   1266.79    489.92     299.81    0.213624   -13464.014929   -13463.801305   -13463.986641      0.74
+CMDInterfaceOrca::CalcForces(): Error in gradient calculation, ret=256.
+
+Error: Could not compute the gradient.
+       Check the gradient logfile ("amp_frame11_dry_md_fixed.grad.log") to obtain more information on that issue.
+
+Aborting MD loop.
+
+Errors occurred in the MD loop.
+
+
+-------------------------------------------------------------------------------------------
+
+Execution aborted by error.
+
+    Total execution time: 84261.714 seconds (23h 24m 21.714s)
+
+            46 instructions executed
+            17 function calls
+
+
+Timings for individual modules during the MD run:
+
+Startup calculation               ...     2778.957 sec (=  46.316 min)   3.3 %
+SCF iterations                    ...    58726.565 sec (= 978.776 min)  69.7 %
+SCF gradient evaluation           ...    22338.474 sec (= 372.308 min)  26.5 %
+ORCA initialization               ...        0.450 sec (=   0.008 min)   0.0 %
+Self time inside of MD module     ...      412.622 sec (=   6.877 min)   0.5 %
+------------------------------------------------------------------------------
+Sum of individual times           ...    84257.068 sec (=1404.284 min) 100.0 %
+
+Total wall time of MD module      ...    84262.165 sec (=1404.369 min)
+             --> "dark time"      ...        5.098 sec (=   0.085 min)   0.0 %
+
+orca_md aborted by error.
+
