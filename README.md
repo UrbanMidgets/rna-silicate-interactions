@@ -10,7 +10,9 @@ The repository contains a curated, GitHub-friendly subset of the raw calculation
 - `data/primary_calculations/`: neutral nucleotide calculations on canonical and aluminium-substituted silicate surfaces.
 - `data/supporting_calculations/`: protonated systems, dimer calculations, magnesium docking, and exploratory checks.
 - `data/reference_structures/`: standalone reference surface calculations.
+- `notebooks/`: analysis notebooks copied from the thesis work archive.
 - `scripts/migrate_seafile_data.py`: reproducible migration script used to build `data/` from the local raw archive.
+- `scripts/thesis/`: curated analysis, plotting, ESP, and workflow scripts.
 - `scripts/thesis/`: curated thesis workflow, DFT/ORCA, ESP, frequency-analysis, and visualization scripts copied from the local work archive.
 
 ## Data Layout
