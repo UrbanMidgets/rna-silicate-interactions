@@ -11,6 +11,7 @@ The repository contains a curated, GitHub-friendly subset of the raw calculation
 - `data/supporting_calculations/`: protonated systems, dimer calculations, magnesium docking, and exploratory checks.
 - `data/reference_structures/`: standalone reference surface calculations.
 - `scripts/migrate_seafile_data.py`: reproducible migration script used to build `data/` from the local raw archive.
+- `scripts/thesis/`: curated thesis workflow, DFT/ORCA, ESP, frequency-analysis, and visualization scripts copied from the local work archive.
 
 ## Data Layout
 
