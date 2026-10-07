@@ -1,0 +1,27 @@
+structure,system,surface,frame,expected,observed,published_bond_order,observed_bond_order,published_distance,observed_distance,verdict
+1a,amp,canonical,frame12,Covalently Condensed,Covalently Condensed,0.913,0.913,1.77,1.7740788459777832,OK
+1b,amp,canonical,frame15,Covalently Condensed,Covalently Condensed,0.936,0.9361,1.76,1.7644480466842651,OK
+2a,amp,aluminium,frame15,Covalently Condensed,Covalently Condensed,0.859,0.8588,1.81,1.7884576320648191,KNOWN: Table 4.1 quotes 1.81 A; deposited geometry gives 1.79 A
+3a,amp_protonated,canonical,frame02,Covalently Condensed,Covalently Condensed,0.885,0.8848,1.79,1.7670575380325315,KNOWN: Table 4.1 quotes 1.79 A; deposited geometry gives 1.77 A
+5a,cmp,canonical,frame14,Covalently Condensed,Covalently Condensed,0.661,0.6611,1.93,1.929274320602417,OK
+7a,cmp_protonated,canonical,frame11,Covalently Condensed,Covalently Condensed,0.901,0.9009,1.78,1.7800862789154053,OK
+7b,cmp_protonated,canonical,frame09,Covalently Condensed,Covalently Condensed,0.852,0.8518,1.81,1.8084931373596191,OK
+9a,gmp,canonical,frame16,Covalently Condensed,Covalently Condensed,0.666,0.6664,1.94,1.9356355667114256,OK
+10b,gmp,aluminium,frame59,Covalently Condensed,Covalently Condensed,0.918,0.9178,1.79,1.7898547649383545,OK
+11a,ump,canonical,frame14,Covalently Condensed,Covalently Condensed,0.952,0.9522,1.75,1.7540606260299685,OK
+11b,ump,canonical,frame15,Covalently Condensed,Covalently Condensed,0.936,0.9363,1.76,1.761926293373108,OK
+11c,ump,canonical,frame16,Covalently Condensed,Covalently Condensed,0.94,0.94,1.76,1.759024739265442,OK
+12b,ump,aluminium,frame15,Covalently Condensed,Covalently Condensed,0.896,0.8964,1.79,1.7873657941818235,OK
+4a (dagger),amp_protonated,aluminium,frame12,Excluded (Off-Basal),Excluded (Off-Basal),,0.0,,,OK
+4b (dagger),amp_protonated,aluminium,frame14,Excluded (Off-Basal),Excluded (Off-Basal),,0.0,,,OK
+10a (dagger),gmp,aluminium,frame35,Excluded (Off-Basal),Excluded (Off-Basal),,0.0,,,OK
+12a (dagger),ump,aluminium,frame14,Excluded (Off-Basal),Excluded (Off-Basal),,0.0,,,OK
+1c,amp,canonical,frame11,no linkage,Surface Anchored,,0.0,,,OK
+2b,amp,aluminium,frame16,no linkage,Surface Anchored,,0.0,,,OK
+3b,amp_protonated,canonical,frame10,no linkage,Surface Anchored,,0.0,,,OK
+5b,cmp,canonical,frame15,no linkage,Surface Anchored,,0.0,,,OK
+6a/6b,cmp,aluminium,frame14,no linkage,Free,,0.0,,,OK
+6a/6b,cmp,aluminium,frame15,no linkage,Surface Anchored,,0.0,,,OK
+8a/8b,cmp_protonated,aluminium,frame02,no linkage,Surface Anchored,,0.0,,,OK
+8a/8b,cmp_protonated,aluminium,frame03,no linkage,Free,,0.0,,,OK
+9b,gmp,canonical,frame15,no linkage,Surface Anchored,,0.0,,,OK

@@ -74,6 +74,18 @@ Three defects were fixed; earlier copies of this file are affected.
 
 Gradient companion outputs (`*_engrad.out`) are now deduplicated against their optimisation run; previously they produced a second row reporting bond order 0 for a structure that is in fact linked.
 
+## Derived tables
+
+| File | Produced by | Contents |
+| --- | --- | --- |
+| `table_4_1_reconciliation.csv` | `scripts/verify_table_4_1.py` | Row-by-row check of all twenty-six Table 4.1 structures against the generated classifications. |
+| `preorganisation.csv` | `scripts/generate_preorganisation_table.py` | Solvated free-phosphate-oxygen to silicon distance, approach angle and ester-oxygen distance for every structure, paired with the dehydrated outcome. |
+
+`preorganisation.csv` quantifies the §4.4.1 argument across the whole dataset rather than the seven structures the thesis enumerates. The published values for those seven are reproduced (10b 3.87 Å, 11a 3.71 Å, 11b 3.93 Å, 11c 3.95 Å, 12b 4.31 Å). Two caveats emerge from the full set:
+
+- **The distance ranges overlap.** Reacting structures span 3.36–4.82 Å and non-reacting 4.28–6.01 Å, so the solvated separation alone does not determine the outcome. Approach angle separates better (18° mean against 34°) but also overlaps.
+- **The free-versus-ester criterion predicts 19 of 24 basal structures (79 %).** The clearest counterexamples are AMP on the canonical surface, frames 12 and 15 — structures 1a and 1b — where the ester oxygen is *nearer* a silicon than the free oxygen and the linkage forms anyway. Neither is among the seven the thesis enumerates.
+
 ### Reconciliation with thesis Table 4.1
 
 All thirteen P–O–Si linkages in Table 4.1 are reproduced from the deposited data, each matching the published Mayer bond order to within 0.002 and the published distance to within 0.01 Å. All four structures marked † in Table 4.1 are independently recovered as `Excluded (Off-Basal)` from geometry alone, without reference to the thesis.
