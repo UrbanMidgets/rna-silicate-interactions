@@ -14,6 +14,20 @@ class StateClassificationThresholds:
     no_bond_order: float = 0.2
     hbond_distance: float = 3.0
     anchored_distance: float = 3.0
+    # A P-O-Si linkage is assigned on geometry *and* population analysis, not on
+    # bond order alone. The slab's own apical Si-OH bonds sit at 1.75-1.76 A and
+    # provide the in-structure reference; no reported linkage exceeds 1.94 A.
+    max_linkage_distance: float = 2.0
+    # Poses that migrate around the cluster periphery fall outside the model's
+    # domain of validity: the edge and apical faces exist only to close a finite
+    # cluster and do not represent an extended surface. A pose resting on the
+    # basal face keeps every atom well above the plane of the framework cations;
+    # one that has wrapped around the edge drops toward or below it.
+    #
+    # Calibrated against the structures the thesis excludes under its own
+    # selection criteria. Retained poses measure 1.60-2.35 A; excluded poses
+    # measure -0.08 to 0.89 A. The gap is wide and the threshold sits in it.
+    min_basal_height: float = 1.25
 
 
 class StateClassifier:
@@ -76,15 +90,40 @@ class StateClassifier:
         ribose_anchor = float(self._get(final_c, "min_dist_riboseOH_surfSilanol", default=np.inf))
         phosphate_surface_anchor = float(self._get(final_c, "min_dist_phosphateO_surfaceO", default=np.inf))
         phosphate_si_dist = float(self._get(final_c, "min_dist_phosphateO_surfaceSi", default=np.nan))
-        siloxane_dist = float(self._get(final_c, "dist_PO_siloxane_COM", default=np.nan))
+        siloxane_dist = float(self._get(final_c, "dist_PO_siloxane_ring_centroid", default=np.nan))
+        edge_dist = float(self._get(final_c, "min_dist_nucleotide_edgeOH", default=np.nan))
+        basal_height = float(self._get(final_c, "nucleotide_min_height_above_plane", default=np.nan))
+        overhang = float(self._get(final_c, "nucleotide_overhang_fraction", default=np.nan))
         anchoring_dist = min(nh2_anchor, ribose_anchor, phosphate_surface_anchor)
+
+        # Selection criterion: the pose must lie on the basal face. Structures
+        # failing it are reported but excluded from comparison, because their
+        # stabilisation derives from a region of the model that does not
+        # represent an extended surface.
+        off_basal = bool(
+            np.isfinite(basal_height) and basal_height < self.thresholds.min_basal_height
+        )
 
         state = "Free"
         reason = "No covalent Si-P bond, steric lock, or close surface anchor detected"
 
-        if bond_order >= self.thresholds.covalent_bond_order:
+        if off_basal:
+            state = "Excluded (Off-Basal)"
+            reason = (
+                f"Nucleotide descends to {basal_height:.2f} A of the slab mid-plane "
+                f"(< {self.thresholds.min_basal_height:.2f} A) with "
+                f"{overhang:.0%} of its atoms beyond the slab footprint; migrated to the "
+                "cluster periphery and outside the basal-face selection criteria"
+            )
+        elif bond_order >= self.thresholds.covalent_bond_order and (
+            not np.isfinite(phosphate_si_dist)
+            or phosphate_si_dist <= self.thresholds.max_linkage_distance
+        ):
             state = "Covalently Condensed"
-            reason = f"Si-O(phosphate) Mayer bond order {bond_order:.3f} exceeds {self.thresholds.covalent_bond_order:.2f}"
+            reason = (
+                f"Si-O(phosphate) Mayer bond order {bond_order:.3f} exceeds "
+                f"{self.thresholds.covalent_bond_order:.2f} at {phosphate_si_dist:.2f} A"
+            )
         elif (
             bond_order < self.thresholds.no_bond_order
             and (intramol_dist <= self.thresholds.hbond_distance or intramol_count > 0)
@@ -108,7 +147,11 @@ class StateClassifier:
             "Final_RiboseOH_SurfaceSilanol_Dist": ribose_anchor,
             "Final_PhosphateO_SurfaceO_Dist": phosphate_surface_anchor,
             "Final_PhosphateO_SurfaceSi_Dist": phosphate_si_dist,
-            "Final_PO_Siloxane_COM_Dist": siloxane_dist,
+            "Final_PO_Siloxane_Ring_Centroid_Dist": siloxane_dist,
+            "Final_Nucleotide_EdgeOH_Dist": edge_dist,
+            "Final_Basal_Height": basal_height,
+            "Final_Overhang_Fraction": overhang,
+            "Selection_Pass": not off_basal,
         }
 
     def classify_trajectory(self, filename: str) -> dict[str, Any]:

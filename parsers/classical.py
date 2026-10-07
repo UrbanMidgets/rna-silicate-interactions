@@ -41,9 +41,26 @@ class ClassicalTopologyConfig:
     p_index: Optional[int] = None
     siloxane_rings: Mapping[str, SelectionValue] = field(default_factory=dict)
 
+    # Chemistry cutoffs. Previously hard-coded in method bodies, which made the
+    # class non-configurable despite existing for that purpose.
+    p_o_bond_cutoff: float = 1.9
+    o_h_bond_cutoff: float = 1.25
+    si_o_bond_cutoff: float = 1.85
+    ring_size: int = 6
+    # Tetrahedral framework cations. Aluminium must be included: in the
+    # Al-substituted slab the four oxygens around the substitution bridge Al-O-Si,
+    # so counting Si neighbours alone makes them look terminal and wrongly marks
+    # them as edge hydroxyls.
+    framework_elements: tuple[str, ...] = ("Si", "Al")
+    # Half-thickness (A) of the band around the slab mid-plane within which a
+    # terminating oxygen counts as edge- rather than face-terminating.
+    face_plane_tolerance: float = 1.0
+
     def __post_init__(self) -> None:
         if self.index_base not in (0, 1):
             raise ValueError("index_base must be 0 or 1")
+        if self.ring_size < 3:
+            raise ValueError("ring_size must be at least 3")
 
     def _normalize_indices(self, value: SelectionValue) -> SelectionValue:
         indices = _as_index_array(value)
@@ -99,7 +116,16 @@ class ClassicalConformationParser:
                 "min_dist_intramol_OH_PO",
                 "steric_trap_hbond_count",
                 "min_dist_phosphateO_surfaceSi",
-                "dist_PO_siloxane_COM",
+                "min_dist_nucleotide_edgeOH",
+                "nucleotide_edgeOH_contact_count",
+                "min_dist_nucleotide_apicalOH",
+                "nucleotide_apicalOH_contact_count",
+                "nucleotide_min_height_above_plane",
+                "nucleotide_overhang_fraction",
+                "dist_PO_siloxane_ring_centroid",
+                "nearest_siloxane_ring",
+                "siloxane_ring_phosphate_oxygen",
+                "n_siloxane_rings",
             ]
         )
 
@@ -120,7 +146,154 @@ class ClassicalConformationParser:
         names = np.asarray(u.atoms.names, dtype=str)
         return np.where(np.char.upper(names) == element.upper())[0]
 
-    def _infer_config(self, u: mda.Universe) -> dict[str, SelectionValue]:
+    @staticmethod
+    def _find_cycles(neighbours: Mapping[int, set[int]], length: int) -> list[tuple[int, ...]]:
+        """Enumerate simple cycles of exactly `length` nodes in an undirected graph.
+
+        Each cycle is returned once, as a tuple in traversal order starting from
+        its lowest-numbered member.
+        """
+        seen: set[tuple[int, ...]] = set()
+        cycles: list[tuple[int, ...]] = []
+        for start in sorted(neighbours):
+            stack: list[tuple[int, list[int]]] = [(start, [start])]
+            while stack:
+                node, path = stack.pop()
+                if len(path) == length:
+                    if start in neighbours[node]:
+                        key = tuple(sorted(path))
+                        if key not in seen:
+                            seen.add(key)
+                            cycles.append(tuple(path))
+                    continue
+                for nb in sorted(neighbours[node]):
+                    # Only extend through nodes above `start` so each cycle is
+                    # discovered from its lowest member exactly once.
+                    if nb <= start or nb in path:
+                        continue
+                    stack.append((nb, path + [nb]))
+        return cycles
+
+    def _framework_indices(self, u: mda.Universe, surface_stop: Optional[int]) -> np.ndarray:
+        """Tetrahedral framework cations (Si and any substituted Al) in the slab."""
+        parts = [self._element_indices(u, el) for el in self.topology_config.framework_elements]
+        if not parts:
+            return np.array([], dtype=int)
+        framework = np.unique(np.concatenate(parts)) if len(parts) > 1 else parts[0]
+        if surface_stop is not None:
+            framework = framework[framework < surface_stop]
+        return framework
+
+    def _surface_bond_matrix(
+        self,
+        u: mda.Universe,
+        framework: np.ndarray,
+        surface_o: np.ndarray,
+    ) -> np.ndarray:
+        """Boolean (n_framework, n_o) cation-O bonding matrix for the slab."""
+        if len(framework) == 0 or len(surface_o) == 0:
+            return np.zeros((len(framework), len(surface_o)), dtype=bool)
+        d = distance_array(u.atoms[framework].positions, u.atoms[surface_o].positions)
+        return d <= self.topology_config.si_o_bond_cutoff
+
+    def _classify_surface_hydroxyls(
+        self,
+        u: mda.Universe,
+        framework: np.ndarray,
+        surface_o: np.ndarray,
+        bonded: np.ndarray,
+        nucleotide_indices: np.ndarray,
+    ) -> dict[str, list[int]]:
+        """Split terminating oxygens into apical and edge sets.
+
+        Faces are assigned from the perpendicular height of each terminating
+        oxygen above the mean plane of the slab silicons, the plane obtained by
+        singular value decomposition and oriented so the adsorbate lies on the
+        positive side. Oxygens lying close to that plane but far from the slab
+        axis terminate the edges; those displaced away from the adsorbate
+        terminate the apical face.
+
+        Both sets exist only to close a finite cluster and have no counterpart in
+        an extended phyllosilicate, which is why contact with them disqualifies a
+        pose.
+        """
+        empty = {"apical_hydroxyl_oxygens": [], "edge_hydroxyl_oxygens": []}
+        if len(framework) < 3 or len(surface_o) == 0 or bonded.size == 0:
+            return empty
+
+        terminal = surface_o[bonded.sum(axis=0) == 1]
+        if len(terminal) == 0:
+            return empty
+
+        centre = u.atoms[framework].positions.mean(axis=0)
+        _, _, vt = np.linalg.svd(u.atoms[framework].positions - centre)
+        normal = vt[2]
+
+        # Orient so the adsorbate is on the positive side (thesis convention).
+        if len(nucleotide_indices):
+            probe = u.atoms[nucleotide_indices].positions.mean(axis=0)
+            if float(np.dot(probe - centre, normal)) < 0:
+                normal = -normal
+
+        offsets = u.atoms[terminal].positions - centre
+        height = offsets @ normal
+        tolerance = self.topology_config.face_plane_tolerance
+
+        edge = terminal[np.abs(height) <= tolerance]
+        apical = terminal[height < -tolerance]
+        return {
+            "apical_hydroxyl_oxygens": apical.tolist(),
+            "edge_hydroxyl_oxygens": edge.tolist(),
+        }
+
+    def _detect_siloxane_rings(
+        self,
+        u: mda.Universe,
+        framework: np.ndarray,
+        surface_o: np.ndarray,
+        bonded: np.ndarray,
+    ) -> dict[str, list[int]]:
+        """Identify n-membered siloxane rings from Si-O connectivity.
+
+        A ring is n silicons joined in a cycle by n bridging oxygens, where a
+        bridging oxygen is one bonded to exactly two silicons. The returned atom
+        list for each ring contains both the silicons and the bridging oxygens
+        that join them, in cyclic order.
+
+        Returns an empty mapping when the topology yields no rings. Callers must
+        treat that as "not measurable" rather than substituting another group.
+        """
+        if len(framework) == 0 or len(surface_o) == 0 or bonded.size == 0:
+            return {}
+
+        # A bridging oxygen connects exactly two framework cations.
+        bridging_local = np.where(bonded.sum(axis=0) == 2)[0]
+        if len(bridging_local) == 0:
+            return {}
+
+        bridge_of: dict[tuple[int, int], int] = {}
+        neighbours: dict[int, set[int]] = {int(s): set() for s in framework}
+        for local_o in bridging_local:
+            left, right = np.where(bonded[:, local_o])[0]
+            a, b = int(framework[left]), int(framework[right])
+            bridge_of[(a, b)] = int(surface_o[local_o])
+            bridge_of[(b, a)] = int(surface_o[local_o])
+            neighbours[a].add(b)
+            neighbours[b].add(a)
+
+        rings: dict[str, list[int]] = {}
+        for ordinal, cycle in enumerate(self._find_cycles(neighbours, self.topology_config.ring_size)):
+            size = len(cycle)
+            oxygens = [bridge_of[(cycle[i], cycle[(i + 1) % size])] for i in range(size)]
+            rings[f"ring_{ordinal:02d}"] = list(cycle) + oxygens
+        return rings
+
+    def _infer_config(self, u: mda.Universe) -> tuple[dict[str, SelectionValue], dict[str, list[int]]]:
+        """Derive atom groups and siloxane-ring membership from frame 0.
+
+        Returns (groups, rings). Ring membership is topological and is held fixed
+        for the trajectory; ring centroids are recomputed per frame by the caller.
+        """
         groups = dict(self.topology_config.groups)
 
         p_indices = self._element_indices(u, "P")
@@ -149,7 +322,7 @@ class ClassicalConformationParser:
         if p_idx is not None and len(nucleotide_o):
             p_pos = u.atoms[p_idx].position[None, :]
             distances = distance_array(p_pos, u.atoms[nucleotide_o].positions)[0]
-            phosphate_oxygens = nucleotide_o[distances <= 1.9]
+            phosphate_oxygens = nucleotide_o[distances <= self.topology_config.p_o_bond_cutoff]
         else:
             phosphate_oxygens = np.array([], dtype=int)
 
@@ -157,11 +330,10 @@ class ClassicalConformationParser:
         non_phosphate_o = np.setdiff1d(nucleotide_o, phosphate_oxygens, assume_unique=False)
         if len(non_phosphate_o) and len(nucleotide_h):
             oh_distances = distance_array(u.atoms[non_phosphate_o].positions, u.atoms[nucleotide_h].positions)
-            ribose_oh = non_phosphate_o[np.any(oh_distances <= 1.25, axis=1)]
+            ribose_oh = non_phosphate_o[np.any(oh_distances <= self.topology_config.o_h_bond_cutoff, axis=1)]
         else:
             ribose_oh = np.array([], dtype=int)
         nucleobase_n = nitrogen_indices[nitrogen_indices > surface_stop]
-        siloxane_atoms = np.sort(np.concatenate([silicon_indices[silicon_indices < surface_stop], surface_o]))
 
         groups.setdefault("adenine_nh2", nucleobase_n.tolist())
         groups.setdefault("surface_oxygens", surface_o.tolist())
@@ -171,9 +343,36 @@ class ClassicalConformationParser:
         groups.setdefault("phosphate_oxygens", phosphate_oxygens.tolist())
         groups.setdefault("phosphate_surface_hbond_acceptors", phosphate_oxygens.tolist())
         groups.setdefault("phosphate_oxygen_target", phosphate_oxygens[:1].tolist())
-        groups.setdefault("siloxane_rings", siloxane_atoms.tolist())
 
-        return groups
+        framework = self._framework_indices(u, surface_stop)
+        bonded = self._surface_bond_matrix(u, framework, surface_o)
+
+        # Everything above the surface cut-off is adsorbate, used both to orient
+        # the slab normal and to test the selection criteria.
+        all_indices = np.arange(len(u.atoms))
+        nucleotide_indices = all_indices[all_indices > surface_stop] if surface_stop is not None else np.array([], dtype=int)
+        groups.setdefault("nucleotide_atoms", nucleotide_indices.tolist())
+        groups.setdefault("framework_cations", framework.tolist())
+
+        hydroxyls = self._classify_surface_hydroxyls(u, framework, surface_o, bonded, nucleotide_indices)
+        for name, value in hydroxyls.items():
+            groups.setdefault(name, value)
+
+        # Explicit rings from config win; otherwise detect them from connectivity.
+        # There is deliberately no fallback to "all surface atoms" here: the
+        # centroid of the whole slab is not a siloxane-ring centre, and silently
+        # substituting it previously made dist_PO_siloxane_COM report slab-scale
+        # distances (3.8-12.3 A) under a ring-centre label.
+        configured_rings = self.topology_config.ring_groups()
+        if configured_rings:
+            rings = {
+                name: list(_as_index_array(value) or [])
+                for name, value in configured_rings.items()
+            }
+        else:
+            rings = self._detect_siloxane_rings(u, framework, surface_o, bonded)
+
+        return groups, rings
 
     def _pair_metrics(
         self,
@@ -194,32 +393,98 @@ class ClassicalConformationParser:
             count_name: int(np.sum(distances <= self.hbond_dist_cutoff)),
         }
 
-    def _siloxane_metric(self, u: mda.Universe, groups: Mapping[str, SelectionValue]) -> dict[str, float]:
-        phosphate_o = self._select(u, groups.get("phosphate_oxygen_target"))
-        if len(phosphate_o) == 0:
-            return {"dist_PO_siloxane_COM": np.nan, "nearest_siloxane_ring": ""}
+    def _basal_face_metrics(
+        self,
+        u: mda.Universe,
+        groups: Mapping[str, SelectionValue],
+    ) -> dict[str, float]:
+        """How far the adsorbate sits above the slab mid-plane, and how far it overhangs.
 
-        ring_groups = self.topology_config.ring_groups()
-        if not ring_groups and "siloxane_rings" in groups:
-            ring_groups = {"siloxane_rings": groups["siloxane_rings"]}
+        A pose that migrates around the cluster periphery drops toward, or below,
+        the plane of the framework cations and extends beyond the slab footprint.
+        A pose resting on the basal face does neither. These two numbers are the
+        measurable form of "lies entirely on the basal face".
+        """
+        empty = {
+            "nucleotide_min_height_above_plane": np.nan,
+            "nucleotide_overhang_fraction": np.nan,
+        }
+        framework = self._select(u, groups.get("framework_cations"))
+        nucleotide = self._select(u, groups.get("nucleotide_atoms"))
+        if len(framework) < 3 or len(nucleotide) == 0:
+            return empty
 
-        best_name = ""
-        best_distance = np.inf
-        po_pos = phosphate_o.positions[0]
-        for ring_name, ring_value in ring_groups.items():
-            ring_atoms = self._select(u, ring_value)
+        centre = framework.positions.mean(axis=0)
+        _, _, vt = np.linalg.svd(framework.positions - centre)
+        normal = vt[2]
+        if float(np.dot(nucleotide.positions.mean(axis=0) - centre, normal)) < 0:
+            normal = -normal
+
+        def resolve(positions: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+            offsets = positions - centre
+            height = offsets @ normal
+            radial = np.linalg.norm(offsets - np.outer(height, normal), axis=1)
+            return height, radial
+
+        fw_height, fw_radial = resolve(framework.positions)
+        nuc_height, nuc_radial = resolve(nucleotide.positions)
+
+        return {
+            "nucleotide_min_height_above_plane": float(np.min(nuc_height)),
+            "nucleotide_overhang_fraction": float(np.mean(nuc_radial > fw_radial.max())),
+        }
+
+    def _siloxane_metric(
+        self,
+        u: mda.Universe,
+        groups: Mapping[str, SelectionValue],
+        rings: Mapping[str, Sequence[int]],
+    ) -> dict[str, object]:
+        """Distance from the target phosphate oxygen to the nearest ring centroid.
+
+        The centroid is geometric (unweighted). A mass-weighted centre would be
+        pulled toward the silicons and is not the geometric ring centre that the
+        ring-adsorption configuration refers to.
+
+        Returns NaN when no ring could be identified. That is a real "not
+        measurable" outcome and must not be confused with "measured far away".
+        """
+        empty = {
+            "dist_PO_siloxane_ring_centroid": np.nan,
+            "nearest_siloxane_ring": "",
+            "siloxane_ring_phosphate_oxygen": -1,
+            "n_siloxane_rings": int(len(rings)),
+        }
+
+        # Minimise over every phosphate oxygen, not an arbitrary file-order one.
+        # The question this metric answers is whether *any* phosphate oxygen is
+        # directed at a ring centre.
+        phosphate_o = self._select(u, groups.get("phosphate_oxygens"))
+        if len(phosphate_o) == 0 or not rings:
+            return empty
+
+        centroids = []
+        names: list[str] = []
+        for ring_name, ring_indices in rings.items():
+            ring_atoms = self._select(u, list(ring_indices))
             if len(ring_atoms) == 0:
                 continue
-            ring_com = ring_atoms.center_of_mass()
-            distance = float(np.linalg.norm(po_pos - ring_com))
-            if distance < best_distance:
-                best_distance = distance
-                best_name = ring_name
+            centroids.append(ring_atoms.positions.mean(axis=0))
+            names.append(ring_name)
 
-        if not np.isfinite(best_distance):
-            best_distance = np.nan
+        if not centroids:
+            return empty
 
-        return {"dist_PO_siloxane_COM": best_distance, "nearest_siloxane_ring": best_name}
+        distances = distance_array(phosphate_o.positions, np.asarray(centroids, dtype=np.float32))
+        flat = int(np.argmin(distances))
+        o_pos, ring_pos = np.unravel_index(flat, distances.shape)
+
+        return {
+            "dist_PO_siloxane_ring_centroid": float(distances[o_pos, ring_pos]),
+            "nearest_siloxane_ring": names[int(ring_pos)],
+            "siloxane_ring_phosphate_oxygen": int(phosphate_o.indices[int(o_pos)]),
+            "n_siloxane_rings": int(len(rings)),
+        }
 
     def parse_trajectory(self, xyz_path: str | os.PathLike[str]) -> pd.DataFrame:
         path = Path(xyz_path)
@@ -227,7 +492,7 @@ class ClassicalConformationParser:
             raise FileNotFoundError(f"Trajectory file not found: {path}")
 
         u = mda.Universe(str(path))
-        inferred_groups = self._infer_config(u)
+        inferred_groups, siloxane_rings = self._infer_config(u)
         rows: list[dict[str, object]] = []
 
         for ts in u.trajectory:
@@ -284,7 +549,26 @@ class ClassicalConformationParser:
                     "phosphateO_surfaceSi_contact_count",
                 )
             )
-            row.update(self._siloxane_metric(u, inferred_groups))
+            row.update(
+                self._pair_metrics(
+                    u,
+                    inferred_groups["nucleotide_atoms"],
+                    inferred_groups["edge_hydroxyl_oxygens"],
+                    "min_dist_nucleotide_edgeOH",
+                    "nucleotide_edgeOH_contact_count",
+                )
+            )
+            row.update(
+                self._pair_metrics(
+                    u,
+                    inferred_groups["nucleotide_atoms"],
+                    inferred_groups["apical_hydroxyl_oxygens"],
+                    "min_dist_nucleotide_apicalOH",
+                    "nucleotide_apicalOH_contact_count",
+                )
+            )
+            row.update(self._basal_face_metrics(u, inferred_groups))
+            row.update(self._siloxane_metric(u, inferred_groups, siloxane_rings))
             rows.append(row)
 
         if not rows:

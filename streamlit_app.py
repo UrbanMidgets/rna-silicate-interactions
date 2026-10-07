@@ -64,16 +64,26 @@ def load_manifest(manifest_mtime, classifications_mtime, parser_cache_version):
         classifications_path = REPO_ROOT / "data" / "classifications.csv"
         if classifications_path.exists():
             class_df = pd.read_csv(classifications_path)
-            class_df = class_df.drop_duplicates(subset=['system', 'surface', 'frame', 'state'], keep='last')
-            # Merge classifications based on system, surface, frame, state
-            df = df.merge(
-                class_df[['system', 'surface', 'frame', 'state', 'State', 'Final_Bond_Order', 'Final_Intramol_Dist', 'Final_Anchoring_Dist']], 
-                on=['system', 'surface', 'frame', 'state'], 
-                how='left'
+            # 'calc_state' is the calculation stage and 'predicted_state' the
+            # classifier label. They were previously 'state' and 'State', which
+            # differ only by case and break case-insensitive readers.
+            class_df = class_df.rename(
+                columns={'calc_state': 'state', 'predicted_state': 'classification'}
             )
-            # Rename 'State' to 'classification' for clarity
-            df = df.rename(columns={'State': 'classification'})
-            # Fill NaNs for classifications
+            class_df = class_df.drop_duplicates(subset=['system', 'surface', 'frame', 'state'], keep='last')
+
+            merge_cols = ['system', 'surface', 'frame', 'state', 'classification']
+            optional_cols = [
+                'Selection_Pass',
+                'orca_status',
+                'Final_Bond_Order',
+                'Final_Intramol_Dist',
+                'Final_Anchoring_Dist',
+                'Final_Linkage_Dist',
+            ]
+            merge_cols += [col for col in optional_cols if col in class_df.columns]
+
+            df = df.merge(class_df[merge_cols], on=['system', 'surface', 'frame', 'state'], how='left')
             df['classification'] = df['classification'].fillna('Unclassified')
             
         return df
@@ -540,7 +550,8 @@ def render_interaction_overview(selected_file):
             ("Ribose-PO min dist", _format_metric(result.get("Final_Intramol_Dist"), "A")),
             ("P-O to surface O", _format_metric(result.get("Final_PhosphateO_SurfaceO_Dist"), "A")),
             ("P-O to surface Si", _format_metric(result.get("Final_PhosphateO_SurfaceSi_Dist"), "A")),
-            ("PO-siloxane COM", _format_metric(result.get("Final_PO_Siloxane_COM_Dist"), "A")),
+            ("P-O to siloxane ring centre", _format_metric(result.get("Final_PO_Siloxane_Ring_Centroid_Dist"), "A")),
+            ("Nucleotide to edge OH", _format_metric(result.get("Final_Nucleotide_EdgeOH_Dist"), "A")),
             ("FINAL SINGLE POINT ENERGY", _format_energy_hartree(energy_summary.get("final_energy_hartree"))),
             ("Final energy converted", _format_energy_kj_mol(energy_summary.get("final_energy_kj_mol"))),
         ]
@@ -557,7 +568,8 @@ def render_interaction_overview(selected_file):
             "min_dist_riboseOH_surfSilanol",
             "min_dist_phosphateO_surfaceO",
             "min_dist_phosphateO_surfaceSi",
-            "dist_PO_siloxane_COM",
+            "dist_PO_siloxane_ring_centroid",
+            "min_dist_nucleotide_edgeOH",
         ]
         available_cols = [col for col in classical_cols if col in c_df.columns]
         if available_cols:
@@ -568,7 +580,8 @@ def render_interaction_overview(selected_file):
                     "min_dist_riboseOH_surfSilanol": "Ribose hydroxyl oxygen to surface oxygen distance",
                     "min_dist_phosphateO_surfaceO": "Phosphate oxygen to surface oxygen distance",
                     "min_dist_phosphateO_surfaceSi": "Phosphate oxygen to surface silicon distance",
-                    "dist_PO_siloxane_COM": "Phosphate oxygen to siloxane center-of-mass distance",
+                    "dist_PO_siloxane_ring_centroid": "Phosphate oxygen to nearest siloxane ring centroid",
+                    "min_dist_nucleotide_edgeOH": "Nucleotide to edge-terminating hydroxyl distance",
                 }
             )
             render_interaction_line_chart(
